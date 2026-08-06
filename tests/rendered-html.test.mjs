@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -28,9 +29,21 @@ test("server-renders the FaceGuard local-only experience", async () => {
 });
 
 test("viewing-state rules fail closed and recover conservatively", async () => {
-  const { advanceProtection, classifyObservation } = await import(
+  const {
+    advanceProtection,
+    classifyObservation,
+    POST_ENROLMENT_PROTECTION,
+    RECOVERY_SAFE_HITS,
+  } = await import(
     "../app/state.ts"
   );
+
+  assert.deepEqual(POST_ENROLMENT_PROTECTION, {
+    protected: false,
+    observation: "safe",
+    safeHits: RECOVERY_SAFE_HITS,
+    unsafeHits: 0,
+  });
 
   assert.equal(
     classifyObservation({
@@ -72,10 +85,30 @@ test("viewing-state rules fail closed and recover conservatively", async () => {
     unsafeHits: 0,
   };
   state = advanceProtection(state, "safe");
-  state = advanceProtection(state, "safe");
   assert.equal(state.protected, true);
   state = advanceProtection(state, "safe");
   assert.equal(state.protected, false);
   state = advanceProtection(state, "extra-viewer");
   assert.equal(state.protected, true);
+
+  state = { ...POST_ENROLMENT_PROTECTION };
+  state = advanceProtection(state, "absent");
+  state = advanceProtection(state, "absent");
+  assert.equal(state.protected, false);
+  state = advanceProtection(state, "absent");
+  assert.equal(state.protected, true);
+});
+
+test("uses five guided enrolment photos and the supplied local decoy", async () => {
+  const source = await readFile(
+    new URL("../app/FaceGuardApp.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /const ENROLMENT_SAMPLES = 5;/);
+  assert.match(source, /src="\/decoy-government\.png"/);
+  assert.match(source, /position: "centre"/);
+  assert.match(source, /position: "upper-left"/);
+  assert.match(source, /position: "lower-left"/);
+  assert.match(source, /position: "upper-right"/);
+  assert.match(source, /position: "lower-right"/);
 });

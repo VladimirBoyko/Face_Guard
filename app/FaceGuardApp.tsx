@@ -1,9 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   advanceProtection,
   classifyObservation,
+  POST_ENROLMENT_PROTECTION,
   type ProtectionState,
   type ViewingState,
 } from "./state";
@@ -32,8 +34,16 @@ type HumanEngine = {
   };
 };
 
-const ENROLMENT_SAMPLES = 3;
-const MONITOR_INTERVAL_MS = 700;
+const ENROLMENT_SAMPLES = 5;
+const MONITOR_INTERVAL_MS = 650;
+
+const PHOTO_DIRECTIONS = [
+  { label: "centre", position: "centre" },
+  { label: "upper-left corner", position: "upper-left" },
+  { label: "lower-left corner", position: "lower-left" },
+  { label: "upper-right corner", position: "upper-right" },
+  { label: "lower-right corner", position: "lower-right" },
+] as const;
 
 const INITIAL_PROTECTION: ProtectionState = {
   protected: true,
@@ -93,6 +103,7 @@ export function FaceGuardApp() {
   const [protection, setProtection] =
     useState<ProtectionState>(INITIAL_PROTECTION);
   const [lastCheckMs, setLastCheckMs] = useState<number | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -122,6 +133,16 @@ export function FaceGuardApp() {
     detectionRunningRef.current = false;
   }, []);
 
+  const enterFullscreen = useCallback(async () => {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+      try {
+        await document.documentElement.requestFullscreen();
+      } catch {
+        // Fullscreen remains optional when the browser or user declines it.
+      }
+    }
+  }, []);
+
   const endSession = useCallback(() => {
     stopMonitoring();
     stopStream(streamRef.current);
@@ -135,6 +156,9 @@ export function FaceGuardApp() {
     setLastCheckMs(null);
     setMessage("");
     updatePhase("ended");
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
   }, [clearBiometricMemory, stopMonitoring, updatePhase]);
 
   useEffect(() => {
@@ -145,8 +169,13 @@ export function FaceGuardApp() {
     };
 
     window.addEventListener("pagehide", release);
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => {
       window.removeEventListener("pagehide", release);
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
       release();
     };
   }, [clearBiometricMemory, stopMonitoring]);
@@ -163,7 +192,7 @@ export function FaceGuardApp() {
         detector: {
           modelPath: "blazeface.json",
           maxDetected: 5,
-          minConfidence: 0.45,
+          minConfidence: 0.6,
           minSize: 48,
           rotation: false,
         },
@@ -193,7 +222,7 @@ export function FaceGuardApp() {
   const startSession = useCallback(async () => {
     setMessage("");
     updatePhase("starting");
-
+    void enterFullscreen();
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setMessage(
         "Camera access requires localhost or another secure browser context.",
@@ -232,7 +261,7 @@ export function FaceGuardApp() {
       );
       updatePhase("intro");
     }
-  }, [createEngine, updatePhase]);
+  }, [createEngine, enterFullscreen, updatePhase]);
 
   const monitorOnce = useCallback(async () => {
     if (
@@ -279,7 +308,7 @@ export function FaceGuardApp() {
   }, []);
 
   const beginMonitoring = useCallback(() => {
-    const initial = { ...INITIAL_PROTECTION };
+    const initial = { ...POST_ENROLMENT_PROTECTION };
     protectionRef.current = initial;
     setProtection(initial);
     updatePhase("monitoring");
@@ -300,7 +329,7 @@ export function FaceGuardApp() {
     }
 
     detectionRunningRef.current = true;
-    setMessage("Checking this sample…");
+    setMessage("Checking this photo…");
     try {
       const result = await engineRef.current.detect(videoRef.current);
       if (result.face.length !== 1) {
@@ -315,7 +344,7 @@ export function FaceGuardApp() {
       const face = result.face[0];
       if (!face.embedding?.length || face.boxScore < 0.5) {
         setMessage(
-          "The sample was not clear enough. Move slightly closer and try again.",
+          "The photo was not clear enough. Move slightly closer and try again.",
         );
         return;
       }
@@ -332,7 +361,7 @@ export function FaceGuardApp() {
         beginMonitoring();
       } else {
         setMessage(
-          `Sample ${count} accepted. Turn your head slightly, then capture the next sample.`,
+          `Photo ${count} accepted. Follow the red marker for the next photo.`,
         );
       }
     } catch {
@@ -349,6 +378,8 @@ export function FaceGuardApp() {
 
   const stateCopy = STATE_COPY[protection.observation];
   const showVideo = phase === "enrolling" || phase === "monitoring";
+  const currentPhotoDirection =
+    PHOTO_DIRECTIONS[Math.min(sampleCount, PHOTO_DIRECTIONS.length - 1)];
 
   return (
     <main className="app-shell">
@@ -405,12 +436,12 @@ export function FaceGuardApp() {
             <div className="enrol-card">
               <div className="step-heading">
                 <span>Enrolment</span>
-                <strong>{sampleCount} / {ENROLMENT_SAMPLES} samples</strong>
+                <strong>{sampleCount} / {ENROLMENT_SAMPLES} photos</strong>
               </div>
               <h2>Confirm the authorised user</h2>
               <p>
-                Be alone in frame, face the camera, and capture three slightly
-                different views. Samples become one temporary descriptor.
+                Be alone in frame and follow the red marker for each photo.
+                Five different views become one temporary descriptor.
               </p>
               <div className="sample-progress" aria-hidden="true">
                 {Array.from({ length: ENROLMENT_SAMPLES }, (_, index) => (
@@ -421,7 +452,7 @@ export function FaceGuardApp() {
                 ))}
               </div>
               <button className="primary-button" onClick={captureSample}>
-                Capture sample {Math.min(sampleCount + 1, ENROLMENT_SAMPLES)}
+                Take photo {Math.min(sampleCount + 1, ENROLMENT_SAMPLES)}
               </button>
               <button className="text-button" onClick={endSession}>
                 Cancel session
@@ -436,9 +467,16 @@ export function FaceGuardApp() {
                 <strong>{stateCopy.label}</strong>
                 <p>{stateCopy.detail}</p>
               </div>
-              <button className="text-button" onClick={endSession}>
-                End session
-              </button>
+              <div className="status-actions">
+                {!isFullscreen && (
+                  <button className="text-button" onClick={enterFullscreen}>
+                    Full screen
+                  </button>
+                )}
+                <button className="text-button" onClick={endSession}>
+                  End session
+                </button>
+              </div>
             </div>
           )}
 
@@ -469,25 +507,6 @@ export function FaceGuardApp() {
           </div>
 
           <div className="workspace-content">
-            <div className="document-preview">
-              <div className="document-heading">
-                <p>Quarterly planning</p>
-                <span>INTERNAL</span>
-              </div>
-              <h2>Client transition brief</h2>
-              <div className="document-lines" aria-hidden="true">
-                <span /><span /><span /><span className="short" />
-              </div>
-              <div className="metric-row">
-                <div><small>Readiness</small><strong>84%</strong></div>
-                <div><small>Open items</small><strong>07</strong></div>
-                <div><small>Review</small><strong>12 Aug</strong></div>
-              </div>
-              <div className="document-lines lower" aria-hidden="true">
-                <span /><span /><span className="medium" />
-              </div>
-            </div>
-
             <aside className="camera-panel">
               <div className="camera-frame">
                 <video
@@ -499,8 +518,9 @@ export function FaceGuardApp() {
                 />
                 {!showVideo && (
                   <div className="camera-placeholder">
-                    <span aria-hidden="true">●</span>
-                    <p>Camera inactive</p>
+                    <span className="ready-mark" aria-hidden="true">FG</span>
+                    <strong>Ready to a new session</strong>
+                    <p>Your camera preview will appear here.</p>
                   </div>
                 )}
                 {showVideo && <div className="face-guide" aria-hidden="true" />}
@@ -524,7 +544,7 @@ export function FaceGuardApp() {
         </div>
         <ol>
           <li><span>01</span><strong>Consent</strong><p>You intentionally grant camera access for each session.</p></li>
-          <li><span>02</span><strong>Enrol</strong><p>Three samples form a temporary descriptor in page memory.</p></li>
+          <li><span>02</span><strong>Enrol</strong><p>Five guided photos form a temporary descriptor in page memory.</p></li>
           <li><span>03</span><strong>Protect</strong><p>Unsafe or uncertain viewing conditions conceal the workspace.</p></li>
           <li><span>04</span><strong>Clear</strong><p>Ending the session stops the camera and removes the descriptor.</p></li>
         </ol>
@@ -538,22 +558,37 @@ export function FaceGuardApp() {
         <span>No uploads · No database · No account</span>
       </footer>
 
+      {phase === "enrolling" && (
+        <div
+          className={`gaze-target ${currentPhotoDirection.position}`}
+          aria-live="polite"
+        >
+          <span className="gaze-dot" aria-hidden="true" />
+          <div className="gaze-message">
+            <strong>Look here and press the button to take photo</strong>
+            <small>
+              Photo {sampleCount + 1} · {currentPhotoDirection.label}
+            </small>
+          </div>
+        </div>
+      )}
+
       {phase === "monitoring" && protection.protected && (
         <div className="decoy-overlay" role="dialog" aria-modal="true" aria-label="Protected workspace">
-          <div className="decoy-topbar">
-            <strong>Focus</strong>
+          <Image
+            className="decoy-image"
+            src="/decoy-government.png"
+            alt="Australian Government Department of Finance confidentiality guidance"
+            fill
+            priority
+            sizes="100vw"
+            unoptimized
+          />
+          <div className="decoy-actions">
+            {!isFullscreen && (
+              <button onClick={enterFullscreen}>Full screen</button>
+            )}
             <button onClick={endSession}>End session</button>
-          </div>
-          <div className="decoy-content">
-            <p className="decoy-date">Thursday · Deep work</p>
-            <h2>Make space for one clear thought.</h2>
-            <div className="focus-card">
-              <span>Current focus</span>
-              <strong>Review notes and prepare next actions</strong>
-              <div className="focus-progress"><i /></div>
-              <small>25 minutes remaining</small>
-            </div>
-            <p className="decoy-note">This view will close automatically when the private viewing condition returns.</p>
           </div>
           <p className="sr-only" aria-live="assertive">
             Protected content concealed because the viewing condition is unsafe or uncertain.
