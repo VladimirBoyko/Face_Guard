@@ -8,6 +8,10 @@ import {
   clearDescriptorSamples,
 } from "../src/core/descriptor.ts";
 import { advanceProtection } from "../src/core/protection-state.ts";
+import {
+  isProtectionStateMessage,
+  sanitiseRendererLog,
+} from "../src/desktop/validation.ts";
 
 test("central configuration retains the prototype defaults", () => {
   assert.equal(FACEGUARD_CONFIG.recognition.matchThreshold, 0.45);
@@ -50,4 +54,33 @@ test("descriptor helpers normalise and zero temporary values", () => {
     [0, 0],
     [0, 0],
   ]);
+});
+
+test("desktop IPC accepts only known protection states", () => {
+  assert.equal(
+    isProtectionStateMessage({ protected: true, observation: "absent" }),
+    true,
+  );
+  assert.equal(
+    isProtectionStateMessage({ protected: true, observation: "unknown" }),
+    false,
+  );
+  assert.equal(isProtectionStateMessage({ observation: "safe" }), false);
+});
+
+test("desktop logging drops biometric-shaped and unknown renderer fields", () => {
+  assert.deepEqual(
+    sanitiseRendererLog({
+      event: "state-transition",
+      observation: "safe",
+      latencyMs: 10.4,
+      embedding: [0.1, 0.2],
+      frame: "raw-image",
+    }),
+    {
+      event: "state-transition",
+      observation: "safe",
+      latencyMs: 10,
+    },
+  );
 });

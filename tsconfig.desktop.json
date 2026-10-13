@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "noEmit": true,
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "app/FaceGuardApp.tsx",
+    "app/state.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "vite.*.config.ts"
+  ],
+  "exclude": ["node_modules", "dist", ".next", ".vinext"]
+}

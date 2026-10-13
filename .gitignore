@@ -37,6 +37,8 @@ yarn-error.log*
 .vercel
 
 /dist/
+/.vite/
+/src/renderer/.vite/
 /.wrangler/
 /outputs/
 /work/
