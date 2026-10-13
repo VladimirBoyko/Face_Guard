@@ -9,6 +9,13 @@ import {
   type ProtectionState,
   type ViewingState,
 } from "./state";
+import { FACEGUARD_CONFIG } from "../src/core/configuration";
+import {
+  averageDescriptors,
+  clearDescriptor,
+  clearDescriptorSamples,
+} from "../src/core/descriptor";
+import { logTechnicalEvent } from "../src/core/logger";
 
 type Phase =
   | "intro"
@@ -34,16 +41,9 @@ type HumanEngine = {
   };
 };
 
-const ENROLMENT_SAMPLES = 5;
-const MONITOR_INTERVAL_MS = 650;
-
-const PHOTO_DIRECTIONS = [
-  { label: "centre", position: "centre" },
-  { label: "upper-left corner", position: "upper-left" },
-  { label: "lower-left corner", position: "lower-left" },
-  { label: "upper-right corner", position: "upper-right" },
-  { label: "lower-right corner", position: "lower-right" },
-] as const;
+const ENROLMENT_SAMPLES = FACEGUARD_CONFIG.enrolment.sampleCount;
+const MONITOR_INTERVAL_MS = FACEGUARD_CONFIG.monitoring.intervalMs;
+const PHOTO_DIRECTIONS = FACEGUARD_CONFIG.enrolment.directions;
 
 const INITIAL_PROTECTION: ProtectionState = {
   protected: true,
@@ -78,20 +78,6 @@ const STATE_COPY: Record<
   },
 };
 
-function averageDescriptors(descriptors: number[][]): number[] {
-  const length = descriptors[0]?.length ?? 0;
-  if (!length) return [];
-
-  const average = Array.from({ length }, (_, index) =>
-    descriptors.reduce((sum, descriptor) => sum + descriptor[index], 0) /
-    descriptors.length,
-  );
-  const magnitude = Math.sqrt(
-    average.reduce((sum, value) => sum + value * value, 0),
-  );
-  return magnitude > 0 ? average.map((value) => value / magnitude) : average;
-}
-
 function stopStream(stream: MediaStream | null) {
   stream?.getTracks().forEach((track) => track.stop());
 }
@@ -121,10 +107,9 @@ export function FaceGuardApp() {
   }, []);
 
   const clearBiometricMemory = useCallback(() => {
-    descriptorRef.current?.fill(0);
-    descriptorRef.current = null;
-    samplesRef.current.forEach((sample) => sample.fill(0));
-    samplesRef.current = [];
+    descriptorRef.current = clearDescriptor(descriptorRef.current);
+    samplesRef.current = clearDescriptorSamples(samplesRef.current);
+    logTechnicalEvent("renderer", "biometric-memory-cleared");
   }, []);
 
   const stopMonitoring = useCallback(() => {
@@ -191,8 +176,8 @@ export function FaceGuardApp() {
         enabled: true,
         detector: {
           modelPath: "blazeface.json",
-          maxDetected: 5,
-          minConfidence: 0.6,
+          maxDetected: FACEGUARD_CONFIG.recognition.maxDetectedFaces,
+          minConfidence: FACEGUARD_CONFIG.recognition.detectorConfidence,
           minSize: 48,
           rotation: false,
         },
@@ -202,7 +187,7 @@ export function FaceGuardApp() {
         description: {
           enabled: true,
           modelPath: "faceres.json",
-          minConfidence: 0.45,
+          minConfidence: FACEGUARD_CONFIG.recognition.matchThreshold,
         },
         antispoof: { enabled: false },
         liveness: { enabled: false },
@@ -295,6 +280,16 @@ export function FaceGuardApp() {
         embeddingsComplete,
       });
       const next = advanceProtection(protectionRef.current, observation);
+      if (
+        next.observation !== protectionRef.current.observation ||
+        next.protected !== protectionRef.current.protected
+      ) {
+        logTechnicalEvent("renderer", "state-transition", {
+          observation: next.observation,
+          protected: next.protected,
+          latencyMs: Math.round(performance.now() - startedAt),
+        });
+      }
       protectionRef.current = next;
       setProtection(next);
       setLastCheckMs(Math.round(performance.now() - startedAt));
@@ -342,7 +337,10 @@ export function FaceGuardApp() {
       }
 
       const face = result.face[0];
-      if (!face.embedding?.length || face.boxScore < 0.5) {
+      if (
+        !face.embedding?.length ||
+        face.boxScore < FACEGUARD_CONFIG.recognition.enrolmentBoxScore
+      ) {
         setMessage(
           "The photo was not clear enough. Move slightly closer and try again.",
         );
@@ -355,8 +353,7 @@ export function FaceGuardApp() {
 
       if (count >= ENROLMENT_SAMPLES) {
         descriptorRef.current = averageDescriptors(samplesRef.current);
-        samplesRef.current.forEach((sample) => sample.fill(0));
-        samplesRef.current = [];
+        samplesRef.current = clearDescriptorSamples(samplesRef.current);
         setMessage("");
         beginMonitoring();
       } else {
