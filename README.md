@@ -160,4 +160,7 @@ must persist across three checks before protection activates; an additional face
 still activates protection immediately. These remain prototype defaults and must
 be tuned using the project's documented test matrix before accuracy claims are
 made. Desktop limits and the repeatable proof-of-concept test procedure are in
-[docs/desktop-poc.md](docs/desktop-poc.md).
+[docs/desktop-poc.md](docs/desktop-poc.md). Step 3 automated results, runtime
+observations, and the manual test backlog are in
+[docs/step3-validation.md](docs/step3-validation.md) and
+[docs/step3-test-matrix.csv](docs/step3-test-matrix.csv).
