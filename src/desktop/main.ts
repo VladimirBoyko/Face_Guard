@@ -14,6 +14,7 @@ import {
   type RendererTechnicalLog,
 } from "./ipc-contract.ts";
 import { OverlayManager } from "./overlay-manager.ts";
+import { shouldGrantMediaPermission } from "./permissions.ts";
 import { FaceGuardTray } from "./tray.ts";
 import {
   isProtectionStateMessage,
@@ -146,11 +147,13 @@ function configurePermissions(): void {
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback, details) => {
       const mediaTypes = "mediaTypes" in details ? details.mediaTypes : [];
-      const mediaAllowed =
-        permission === "media" &&
-        Boolean(mediaTypes?.includes("video")) &&
-        !mediaTypes?.includes("audio");
-      callback(isTrusted(webContents.id) && mediaAllowed);
+      callback(
+        shouldGrantMediaPermission(
+          isTrusted(webContents.id),
+          permission,
+          mediaTypes,
+        ),
+      );
     },
   );
 }

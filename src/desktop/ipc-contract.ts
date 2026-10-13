@@ -20,6 +20,8 @@ export type RendererTechnicalLog = {
   observation?: ViewingState;
   protected?: boolean;
   latencyMs?: number;
+  similarity?: number;
+  transitionMs?: number;
   reason?: string;
   phase?: string;
 };

@@ -52,6 +52,18 @@ export function sanitiseRendererLog(value: unknown): RendererTechnicalLog | null
   ) {
     result.latencyMs = Math.max(0, Math.round(candidate.latencyMs));
   }
+  if (
+    typeof candidate.similarity === "number" &&
+    Number.isFinite(candidate.similarity)
+  ) {
+    result.similarity = Math.max(0, Math.min(1, candidate.similarity));
+  }
+  if (
+    typeof candidate.transitionMs === "number" &&
+    Number.isFinite(candidate.transitionMs)
+  ) {
+    result.transitionMs = Math.max(0, Math.round(candidate.transitionMs));
+  }
   if (typeof candidate.reason === "string") {
     result.reason = candidate.reason.slice(0, 160);
   }

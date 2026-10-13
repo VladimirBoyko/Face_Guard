@@ -62,3 +62,54 @@ export const FACEGUARD_CONFIG: FaceGuardConfiguration = {
     recoveryDelayMs: 0,
   },
 };
+
+export function validateFaceGuardConfiguration(
+  config: FaceGuardConfiguration,
+): string[] {
+  const errors: string[] = [];
+  const probabilityValues = [
+    ["recognition.matchThreshold", config.recognition.matchThreshold],
+    ["recognition.detectorConfidence", config.recognition.detectorConfidence],
+    ["recognition.enrolmentBoxScore", config.recognition.enrolmentBoxScore],
+  ] as const;
+  for (const [name, value] of probabilityValues) {
+    if (!Number.isFinite(value) || value < 0 || value > 1) {
+      errors.push(`${name} must be between 0 and 1`);
+    }
+  }
+
+  const positiveIntegers = [
+    ["recognition.maxDetectedFaces", config.recognition.maxDetectedFaces],
+    ["enrolment.sampleCount", config.enrolment.sampleCount],
+    ["monitoring.intervalMs", config.monitoring.intervalMs],
+    ["monitoring.absencePersistence", config.monitoring.absencePersistence],
+    [
+      "monitoring.additionalViewerPersistence",
+      config.monitoring.additionalViewerPersistence,
+    ],
+    ["monitoring.uncertainPersistence", config.monitoring.uncertainPersistence],
+    [
+      "monitoring.recoverySafeObservations",
+      config.monitoring.recoverySafeObservations,
+    ],
+  ] as const;
+  for (const [name, value] of positiveIntegers) {
+    if (!Number.isInteger(value) || value < 1) {
+      errors.push(`${name} must be a positive integer`);
+    }
+  }
+
+  for (const [name, value] of [
+    ["monitoring.concealmentDelayMs", config.monitoring.concealmentDelayMs],
+    ["monitoring.recoveryDelayMs", config.monitoring.recoveryDelayMs],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0) {
+      errors.push(`${name} must be zero or greater`);
+    }
+  }
+
+  if (config.enrolment.directions.length !== config.enrolment.sampleCount) {
+    errors.push("enrolment directions must match enrolment.sampleCount");
+  }
+  return errors;
+}

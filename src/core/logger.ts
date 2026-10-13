@@ -4,6 +4,8 @@ export type TechnicalLogDetails = {
   observation?: ViewingState;
   protected?: boolean;
   latencyMs?: number;
+  similarity?: number;
+  transitionMs?: number;
   reason?: string;
   displayCount?: number;
   phase?: string;

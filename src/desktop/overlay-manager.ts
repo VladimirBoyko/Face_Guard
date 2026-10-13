@@ -2,6 +2,7 @@ import { BrowserWindow, screen, type Display } from "electron";
 import decoyImage from "../../public/decoy-government.png?inline";
 import { logTechnicalEvent } from "../core/logger.ts";
 import type { ViewingState } from "../core/protection-state.ts";
+import { shouldShowOverlay } from "./overlay-policy.ts";
 
 function overlayDocument(): string {
   return `<!doctype html>
@@ -138,7 +139,7 @@ export class OverlayManager {
   }
 
   private applyVisibility(reason: string): void {
-    const visible = this.protectedBySession || this.manualTest;
+    const visible = shouldShowOverlay(this.protectedBySession, this.manualTest);
     for (const window of this.windows.values()) {
       if (window.isDestroyed()) continue;
       if (visible && !window.isVisible()) window.showInactive();

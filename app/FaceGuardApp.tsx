@@ -10,11 +10,19 @@ import {
 } from "./state";
 import { FACEGUARD_CONFIG } from "../src/core/configuration";
 import {
+  cameraFailureMessage,
+  classifyCameraStartFailure,
+} from "../src/core/camera";
+import {
   averageDescriptors,
-  clearDescriptor,
   clearDescriptorSamples,
 } from "../src/core/descriptor";
+import { evaluateEnrolmentFaces } from "../src/core/enrolment";
 import { logTechnicalEvent } from "../src/core/logger";
+import {
+  clearSessionBiometricMemory,
+  stopMediaStream,
+} from "../src/core/session-cleanup";
 
 type Phase =
   | "intro"
@@ -77,10 +85,6 @@ const STATE_COPY: Record<
   },
 };
 
-function stopStream(stream: MediaStream | null) {
-  stream?.getTracks().forEach((track) => track.stop());
-}
-
 export function FaceGuardApp() {
   const desktopBridge =
     typeof window === "undefined" ? undefined : window.faceGuardDesktop;
@@ -102,6 +106,7 @@ export function FaceGuardApp() {
   const detectionRunningRef = useRef(false);
   const protectionRef = useRef<ProtectionState>(INITIAL_PROTECTION);
   const phaseRef = useRef<Phase>("intro");
+  const observationStartedAtRef = useRef<number | null>(null);
   const desktopProtectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -112,8 +117,12 @@ export function FaceGuardApp() {
   }, []);
 
   const clearBiometricMemory = useCallback(() => {
-    descriptorRef.current = clearDescriptor(descriptorRef.current);
-    samplesRef.current = clearDescriptorSamples(samplesRef.current);
+    const cleared = clearSessionBiometricMemory({
+      descriptor: descriptorRef.current,
+      samples: samplesRef.current,
+    });
+    descriptorRef.current = cleared.descriptor;
+    samplesRef.current = cleared.samples;
     logTechnicalEvent("renderer", "biometric-memory-cleared");
   }, []);
 
@@ -136,7 +145,7 @@ export function FaceGuardApp() {
 
   const endSession = useCallback(() => {
     stopMonitoring();
-    stopStream(streamRef.current);
+    stopMediaStream(streamRef.current);
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     clearBiometricMemory();
@@ -156,7 +165,7 @@ export function FaceGuardApp() {
   useEffect(() => {
     const release = () => {
       stopMonitoring();
-      stopStream(streamRef.current);
+      stopMediaStream(streamRef.current);
       clearBiometricMemory();
     };
 
@@ -283,14 +292,9 @@ export function FaceGuardApp() {
       setSampleCount(0);
       updatePhase("enrolling");
     } catch (error) {
-      stopStream(streamRef.current);
+      stopMediaStream(streamRef.current);
       streamRef.current = null;
-      const name = error instanceof DOMException ? error.name : "";
-      setMessage(
-        name === "NotAllowedError"
-          ? "Camera permission was not granted. FaceGuard cannot start without it."
-          : "FaceGuard could not start the camera or local face model. Please check the camera and try again.",
-      );
+      setMessage(cameraFailureMessage(classifyCameraStartFailure(error)));
       updatePhase("intro");
     }
   }, [createEngine, desktopBridge, enterFullscreen, isDesktop, updatePhase]);
@@ -321,21 +325,34 @@ export function FaceGuardApp() {
             face.embedding!,
           ),
         );
+      const bestSimilarity = similarities.length ? Math.max(...similarities) : 0;
       const observation = classifyObservation({
         faceCount: result.face.length,
-        bestSimilarity: similarities.length ? Math.max(...similarities) : 0,
+        bestSimilarity,
         embeddingsComplete,
       });
-      const next = advanceProtection(protectionRef.current, observation);
+      const previous = protectionRef.current;
+      if (observation !== previous.observation) {
+        observationStartedAtRef.current = startedAt;
+      }
+      const next = advanceProtection(previous, observation);
       if (
-        next.observation !== protectionRef.current.observation ||
-        next.protected !== protectionRef.current.protected
+        next.observation !== previous.observation ||
+        next.protected !== previous.protected
       ) {
-        logTechnicalEvent("renderer", "state-transition", {
+        const details = {
           observation: next.observation,
           protected: next.protected,
           latencyMs: Math.round(performance.now() - startedAt),
-        });
+          similarity: Math.round(bestSimilarity * 1_000) / 1_000,
+          transitionMs:
+            next.protected !== previous.protected &&
+            observationStartedAtRef.current !== null
+              ? Math.round(performance.now() - observationStartedAtRef.current)
+              : undefined,
+        };
+        logTechnicalEvent("renderer", "state-transition", details);
+        desktopBridge?.technicalLog({ event: "state-transition", ...details });
       }
       protectionRef.current = next;
       setProtection(next);
@@ -347,7 +364,7 @@ export function FaceGuardApp() {
     } finally {
       detectionRunningRef.current = false;
     }
-  }, []);
+  }, [desktopBridge]);
 
   const beginMonitoring = useCallback(() => {
     const initial = { ...POST_ENROLMENT_PROTECTION };
@@ -375,27 +392,22 @@ export function FaceGuardApp() {
     setMessage("Checking this photo…");
     try {
       const result = await engineRef.current.detect(videoRef.current);
-      if (result.face.length !== 1) {
+      const decision = evaluateEnrolmentFaces(
+        result.face,
+        FACEGUARD_CONFIG.recognition.enrolmentBoxScore,
+      );
+      if (!decision.accepted) {
         setMessage(
-          result.face.length === 0
+          decision.reason === "no-face"
             ? "No clear face detected. Face the camera in even lighting and try again."
-            : "More than one face detected. Enrolment requires the authorised user to be alone.",
+            : decision.reason === "multiple-faces"
+              ? "More than one face detected. Enrolment requires the authorised user to be alone."
+              : "The photo was not clear enough. Move slightly closer and try again.",
         );
         return;
       }
 
-      const face = result.face[0];
-      if (
-        !face.embedding?.length ||
-        face.boxScore < FACEGUARD_CONFIG.recognition.enrolmentBoxScore
-      ) {
-        setMessage(
-          "The photo was not clear enough. Move slightly closer and try again.",
-        );
-        return;
-      }
-
-      samplesRef.current.push([...face.embedding]);
+      samplesRef.current.push(decision.embedding);
       const count = samplesRef.current.length;
       setSampleCount(count);
 
