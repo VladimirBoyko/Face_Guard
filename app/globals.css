@@ -481,3 +481,7 @@ footer span { color: #77a98e; }
   .decoy-actions { transition: none; }
 }
 .status-actions { display: flex; gap: 4px; margin-left: auto; }
+
+.desktop-mode .topbar { padding-top: 22px; }
+.desktop-mode .hero { min-height: calc(100vh - 84px); padding-top: 42px; }
+.desktop-mode .how-it-works { display: none; }

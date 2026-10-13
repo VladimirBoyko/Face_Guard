@@ -104,11 +104,15 @@ test("uses five guided enrolment photos and the supplied local decoy", async () 
     new URL("../app/FaceGuardApp.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /const ENROLMENT_SAMPLES = 5;/);
+  const configuration = await readFile(
+    new URL("../src/core/configuration.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /FACEGUARD_CONFIG\.enrolment\.sampleCount/);
   assert.match(source, /src="\/decoy-government\.png"/);
-  assert.match(source, /position: "centre"/);
-  assert.match(source, /position: "upper-left"/);
-  assert.match(source, /position: "lower-left"/);
-  assert.match(source, /position: "upper-right"/);
-  assert.match(source, /position: "lower-right"/);
+  assert.match(configuration, /position: "centre"/);
+  assert.match(configuration, /position: "upper-left"/);
+  assert.match(configuration, /position: "lower-left"/);
+  assert.match(configuration, /position: "upper-right"/);
+  assert.match(configuration, /position: "lower-right"/);
 });

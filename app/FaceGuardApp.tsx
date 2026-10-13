@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   advanceProtection,
@@ -9,6 +8,21 @@ import {
   type ProtectionState,
   type ViewingState,
 } from "./state";
+import { FACEGUARD_CONFIG } from "../src/core/configuration";
+import {
+  cameraFailureMessage,
+  classifyCameraStartFailure,
+} from "../src/core/camera";
+import {
+  averageDescriptors,
+  clearDescriptorSamples,
+} from "../src/core/descriptor";
+import { evaluateEnrolmentFaces } from "../src/core/enrolment";
+import { logTechnicalEvent } from "../src/core/logger";
+import {
+  clearSessionBiometricMemory,
+  stopMediaStream,
+} from "../src/core/session-cleanup";
 
 type Phase =
   | "intro"
@@ -34,16 +48,9 @@ type HumanEngine = {
   };
 };
 
-const ENROLMENT_SAMPLES = 5;
-const MONITOR_INTERVAL_MS = 650;
-
-const PHOTO_DIRECTIONS = [
-  { label: "centre", position: "centre" },
-  { label: "upper-left corner", position: "upper-left" },
-  { label: "lower-left corner", position: "lower-left" },
-  { label: "upper-right corner", position: "upper-right" },
-  { label: "lower-right corner", position: "lower-right" },
-] as const;
+const ENROLMENT_SAMPLES = FACEGUARD_CONFIG.enrolment.sampleCount;
+const MONITOR_INTERVAL_MS = FACEGUARD_CONFIG.monitoring.intervalMs;
+const PHOTO_DIRECTIONS = FACEGUARD_CONFIG.enrolment.directions;
 
 const INITIAL_PROTECTION: ProtectionState = {
   protected: true,
@@ -78,25 +85,10 @@ const STATE_COPY: Record<
   },
 };
 
-function averageDescriptors(descriptors: number[][]): number[] {
-  const length = descriptors[0]?.length ?? 0;
-  if (!length) return [];
-
-  const average = Array.from({ length }, (_, index) =>
-    descriptors.reduce((sum, descriptor) => sum + descriptor[index], 0) /
-    descriptors.length,
-  );
-  const magnitude = Math.sqrt(
-    average.reduce((sum, value) => sum + value * value, 0),
-  );
-  return magnitude > 0 ? average.map((value) => value / magnitude) : average;
-}
-
-function stopStream(stream: MediaStream | null) {
-  stream?.getTracks().forEach((track) => track.stop());
-}
-
 export function FaceGuardApp() {
+  const desktopBridge =
+    typeof window === "undefined" ? undefined : window.faceGuardDesktop;
+  const isDesktop = Boolean(desktopBridge);
   const [phase, setPhase] = useState<Phase>("intro");
   const [message, setMessage] = useState("");
   const [sampleCount, setSampleCount] = useState(0);
@@ -114,6 +106,10 @@ export function FaceGuardApp() {
   const detectionRunningRef = useRef(false);
   const protectionRef = useRef<ProtectionState>(INITIAL_PROTECTION);
   const phaseRef = useRef<Phase>("intro");
+  const observationStartedAtRef = useRef<number | null>(null);
+  const desktopProtectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const updatePhase = useCallback((next: Phase) => {
     phaseRef.current = next;
@@ -121,10 +117,13 @@ export function FaceGuardApp() {
   }, []);
 
   const clearBiometricMemory = useCallback(() => {
-    descriptorRef.current?.fill(0);
-    descriptorRef.current = null;
-    samplesRef.current.forEach((sample) => sample.fill(0));
-    samplesRef.current = [];
+    const cleared = clearSessionBiometricMemory({
+      descriptor: descriptorRef.current,
+      samples: samplesRef.current,
+    });
+    descriptorRef.current = cleared.descriptor;
+    samplesRef.current = cleared.samples;
+    logTechnicalEvent("renderer", "biometric-memory-cleared");
   }, []);
 
   const stopMonitoring = useCallback(() => {
@@ -134,6 +133,7 @@ export function FaceGuardApp() {
   }, []);
 
   const enterFullscreen = useCallback(async () => {
+    if (isDesktop) return;
     if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
       try {
         await document.documentElement.requestFullscreen();
@@ -141,11 +141,11 @@ export function FaceGuardApp() {
         // Fullscreen remains optional when the browser or user declines it.
       }
     }
-  }, []);
+  }, [isDesktop]);
 
   const endSession = useCallback(() => {
     stopMonitoring();
-    stopStream(streamRef.current);
+    stopMediaStream(streamRef.current);
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     clearBiometricMemory();
@@ -156,43 +156,77 @@ export function FaceGuardApp() {
     setLastCheckMs(null);
     setMessage("");
     updatePhase("ended");
-    if (document.fullscreenElement) {
+    desktopBridge?.sessionEnded();
+    if (!isDesktop && document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined);
     }
-  }, [clearBiometricMemory, stopMonitoring, updatePhase]);
+  }, [clearBiometricMemory, desktopBridge, isDesktop, stopMonitoring, updatePhase]);
 
   useEffect(() => {
     const release = () => {
       stopMonitoring();
-      stopStream(streamRef.current);
+      stopMediaStream(streamRef.current);
       clearBiometricMemory();
     };
 
     window.addEventListener("pagehide", release);
-    const handleFullscreenChange = () => {
+    const handleFullscreenChange = () =>
       setIsFullscreen(Boolean(document.fullscreenElement));
-    };
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    if (!isDesktop) {
+      document.addEventListener("fullscreenchange", handleFullscreenChange);
+    }
     return () => {
       window.removeEventListener("pagehide", release);
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      if (!isDesktop) {
+        document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      }
       release();
     };
-  }, [clearBiometricMemory, stopMonitoring]);
+  }, [clearBiometricMemory, isDesktop, stopMonitoring]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.onSessionEndRequested(endSession);
+  }, [desktopBridge, endSession]);
+
+  useEffect(() => {
+    if (!desktopBridge || phase !== "monitoring") return;
+    if (desktopProtectionTimerRef.current) {
+      clearTimeout(desktopProtectionTimerRef.current);
+    }
+    const delay = protection.protected
+      ? FACEGUARD_CONFIG.monitoring.concealmentDelayMs
+      : FACEGUARD_CONFIG.monitoring.recoveryDelayMs;
+    desktopProtectionTimerRef.current = setTimeout(() => {
+      desktopBridge.protectionStateChanged({
+        protected: protection.protected,
+        observation: protection.observation,
+      });
+      desktopProtectionTimerRef.current = null;
+    }, delay);
+    return () => {
+      if (desktopProtectionTimerRef.current) {
+        clearTimeout(desktopProtectionTimerRef.current);
+        desktopProtectionTimerRef.current = null;
+      }
+    };
+  }, [desktopBridge, phase, protection.observation, protection.protected]);
 
   const createEngine = useCallback(async (): Promise<HumanEngine> => {
     const { Human } = await import("@vladmandic/human");
     const engine = new Human({
       backend: "webgl",
-      modelBasePath: "/models/",
+      modelBasePath: isDesktop
+        ? new URL("./models/", window.location.href).toString()
+        : "/models/",
       cacheSensitivity: 0,
       filter: { enabled: true, return: false, flip: true },
       face: {
         enabled: true,
         detector: {
           modelPath: "blazeface.json",
-          maxDetected: 5,
-          minConfidence: 0.6,
+          maxDetected: FACEGUARD_CONFIG.recognition.maxDetectedFaces,
+          minConfidence: FACEGUARD_CONFIG.recognition.detectorConfidence,
           minSize: 48,
           rotation: false,
         },
@@ -202,7 +236,7 @@ export function FaceGuardApp() {
         description: {
           enabled: true,
           modelPath: "faceres.json",
-          minConfidence: 0.45,
+          minConfidence: FACEGUARD_CONFIG.recognition.matchThreshold,
         },
         antispoof: { enabled: false },
         liveness: { enabled: false },
@@ -217,13 +251,20 @@ export function FaceGuardApp() {
     });
     await engine.load();
     return engine as unknown as HumanEngine;
-  }, []);
+  }, [isDesktop]);
 
   const startSession = useCallback(async () => {
     setMessage("");
     updatePhase("starting");
     void enterFullscreen();
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    if (desktopBridge && !(await desktopBridge.requestCameraPermission())) {
+      setMessage(
+        "Camera permission was not granted. Enable FaceGuard in System Settings → Privacy & Security → Camera.",
+      );
+      updatePhase("intro");
+      return;
+    }
+    if ((!isDesktop && !window.isSecureContext) || !navigator.mediaDevices?.getUserMedia) {
       setMessage(
         "Camera access requires localhost or another secure browser context.",
       );
@@ -251,17 +292,12 @@ export function FaceGuardApp() {
       setSampleCount(0);
       updatePhase("enrolling");
     } catch (error) {
-      stopStream(streamRef.current);
+      stopMediaStream(streamRef.current);
       streamRef.current = null;
-      const name = error instanceof DOMException ? error.name : "";
-      setMessage(
-        name === "NotAllowedError"
-          ? "Camera permission was not granted. FaceGuard cannot start without it."
-          : "FaceGuard could not start the camera or local face model. Please check the camera and try again.",
-      );
+      setMessage(cameraFailureMessage(classifyCameraStartFailure(error)));
       updatePhase("intro");
     }
-  }, [createEngine, enterFullscreen, updatePhase]);
+  }, [createEngine, desktopBridge, enterFullscreen, isDesktop, updatePhase]);
 
   const monitorOnce = useCallback(async () => {
     if (
@@ -289,12 +325,35 @@ export function FaceGuardApp() {
             face.embedding!,
           ),
         );
+      const bestSimilarity = similarities.length ? Math.max(...similarities) : 0;
       const observation = classifyObservation({
         faceCount: result.face.length,
-        bestSimilarity: similarities.length ? Math.max(...similarities) : 0,
+        bestSimilarity,
         embeddingsComplete,
       });
-      const next = advanceProtection(protectionRef.current, observation);
+      const previous = protectionRef.current;
+      if (observation !== previous.observation) {
+        observationStartedAtRef.current = startedAt;
+      }
+      const next = advanceProtection(previous, observation);
+      if (
+        next.observation !== previous.observation ||
+        next.protected !== previous.protected
+      ) {
+        const details = {
+          observation: next.observation,
+          protected: next.protected,
+          latencyMs: Math.round(performance.now() - startedAt),
+          similarity: Math.round(bestSimilarity * 1_000) / 1_000,
+          transitionMs:
+            next.protected !== previous.protected &&
+            observationStartedAtRef.current !== null
+              ? Math.round(performance.now() - observationStartedAtRef.current)
+              : undefined,
+        };
+        logTechnicalEvent("renderer", "state-transition", details);
+        desktopBridge?.technicalLog({ event: "state-transition", ...details });
+      }
       protectionRef.current = next;
       setProtection(next);
       setLastCheckMs(Math.round(performance.now() - startedAt));
@@ -305,19 +364,20 @@ export function FaceGuardApp() {
     } finally {
       detectionRunningRef.current = false;
     }
-  }, []);
+  }, [desktopBridge]);
 
   const beginMonitoring = useCallback(() => {
     const initial = { ...POST_ENROLMENT_PROTECTION };
     protectionRef.current = initial;
     setProtection(initial);
     updatePhase("monitoring");
+    desktopBridge?.sessionStarted();
     window.setTimeout(() => void monitorOnce(), 0);
     timerRef.current = setInterval(
       () => void monitorOnce(),
       MONITOR_INTERVAL_MS,
     );
-  }, [monitorOnce, updatePhase]);
+  }, [desktopBridge, monitorOnce, updatePhase]);
 
   const captureSample = useCallback(async () => {
     if (
@@ -332,31 +392,28 @@ export function FaceGuardApp() {
     setMessage("Checking this photo…");
     try {
       const result = await engineRef.current.detect(videoRef.current);
-      if (result.face.length !== 1) {
+      const decision = evaluateEnrolmentFaces(
+        result.face,
+        FACEGUARD_CONFIG.recognition.enrolmentBoxScore,
+      );
+      if (!decision.accepted) {
         setMessage(
-          result.face.length === 0
+          decision.reason === "no-face"
             ? "No clear face detected. Face the camera in even lighting and try again."
-            : "More than one face detected. Enrolment requires the authorised user to be alone.",
+            : decision.reason === "multiple-faces"
+              ? "More than one face detected. Enrolment requires the authorised user to be alone."
+              : "The photo was not clear enough. Move slightly closer and try again.",
         );
         return;
       }
 
-      const face = result.face[0];
-      if (!face.embedding?.length || face.boxScore < 0.5) {
-        setMessage(
-          "The photo was not clear enough. Move slightly closer and try again.",
-        );
-        return;
-      }
-
-      samplesRef.current.push([...face.embedding]);
+      samplesRef.current.push(decision.embedding);
       const count = samplesRef.current.length;
       setSampleCount(count);
 
       if (count >= ENROLMENT_SAMPLES) {
         descriptorRef.current = averageDescriptors(samplesRef.current);
-        samplesRef.current.forEach((sample) => sample.fill(0));
-        samplesRef.current = [];
+        samplesRef.current = clearDescriptorSamples(samplesRef.current);
         setMessage("");
         beginMonitoring();
       } else {
@@ -468,9 +525,17 @@ export function FaceGuardApp() {
                 <p>{stateCopy.detail}</p>
               </div>
               <div className="status-actions">
-                {!isFullscreen && (
+                {!isDesktop && !isFullscreen && (
                   <button className="text-button" onClick={enterFullscreen}>
                     Full screen
+                  </button>
+                )}
+                {isDesktop && (
+                  <button
+                    className="text-button"
+                    onClick={() => desktopBridge?.hideControlWindow()}
+                  >
+                    Hide to menu bar
                   </button>
                 )}
                 <button className="text-button" onClick={endSession}>
@@ -552,8 +617,9 @@ export function FaceGuardApp() {
 
       <footer>
         <p>
-          Browser prototype — protects this FaceGuard workspace, not other
-          applications or browser tabs.
+          {isDesktop
+            ? "Desktop prototype — protection is provided by native macOS overlay windows."
+            : "Browser prototype — protects this FaceGuard workspace, not other applications or browser tabs."}
         </p>
         <span>No uploads · No database · No account</span>
       </footer>
@@ -573,16 +639,14 @@ export function FaceGuardApp() {
         </div>
       )}
 
-      {phase === "monitoring" && protection.protected && (
+      {!isDesktop && phase === "monitoring" && protection.protected && (
         <div className="decoy-overlay" role="dialog" aria-modal="true" aria-label="Protected workspace">
-          <Image
+          {/* The same static asset is used by the Vite/Electron renderer. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             className="decoy-image"
             src="/decoy-government.png"
             alt="Australian Government Department of Finance confidentiality guidance"
-            fill
-            priority
-            sizes="100vw"
-            unoptimized
           />
           <div className="decoy-actions">
             {!isFullscreen && (
