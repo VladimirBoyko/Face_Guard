@@ -4,7 +4,7 @@
 
 FaceGuard uses an Electron main process, a sandboxed React renderer, a narrow
 preload bridge, and one native overlay window per detected display. The renderer
-owns webcam access, Human.js inference, five-photo enrolment, and the temporary
+owns webcam access, Human.js inference, six-photo enrolment, and the temporary
 descriptor. It sends only `safe`, `extra-viewer`, `absent`, or `uncertain` plus a
 protection boolean to the main process. The main process owns the menu-bar item,
 window lifecycle, camera permission request, and desktop overlay.
@@ -25,12 +25,13 @@ and `0.60` detector confidence are retained only as prototype defaults.
 ## Reproduce the states
 
 1. Run `pnpm run desktop:dev`, select **Start private session**, grant Camera
-   permission, and complete the five guided photos alone in frame.
-2. **Safe:** remain alone and visible after enrolment. Two safe observations are
-   required to recover from protection.
+   permission, and complete the six guided photos alone in frame. The sixth
+   photo uses the bottom-centre marker to represent a typing posture.
+2. **Safe:** remain alone and visible after enrolment. One safe observation is
+   sufficient to remove protection.
 3. **Extra-viewer:** have a second person enter the camera frame. The default is
    one observation, so protection should appear immediately.
-4. **Absent:** leave the camera frame. Protection appears after three consecutive
+4. **Absent:** leave the camera frame. Protection appears after six consecutive
    absent observations.
 5. **Uncertain:** partially obstruct the camera or create conditions where a
    detected face lacks a complete descriptor. Protection appears after three

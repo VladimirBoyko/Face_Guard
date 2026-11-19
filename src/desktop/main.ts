@@ -10,6 +10,7 @@ import { logTechnicalEvent } from "../core/logger.ts";
 import type { ViewingState } from "../core/protection-state.ts";
 import {
   IPC,
+  type DecoyImageMessage,
   type ProtectionStateMessage,
   type RendererTechnicalLog,
 } from "./ipc-contract.ts";
@@ -17,6 +18,12 @@ import { OverlayManager } from "./overlay-manager.ts";
 import { shouldGrantMediaPermission } from "./permissions.ts";
 import { FaceGuardTray } from "./tray.ts";
 import {
+  clearSavedDecoy,
+  loadSavedDecoy,
+  saveDecoy,
+} from "./decoy-store.ts";
+import {
+  isDecoyImageMessage,
   isProtectionStateMessage,
   sanitiseRendererLog,
 } from "./validation.ts";
@@ -28,6 +35,7 @@ let sessionActive = false;
 let currentObservation: ViewingState = "uncertain";
 let isQuitting = false;
 let quitFallback: ReturnType<typeof setTimeout> | null = null;
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 function isControlSender(senderId: number): boolean {
   return controlWindow?.webContents.id === senderId;
@@ -70,8 +78,42 @@ function finishSession(): void {
   updateTray();
   logTechnicalEvent("desktop", "session-ended");
   if (isQuitting) {
-    if (quitFallback) clearTimeout(quitFallback);
-    app.quit();
+    exitApplication();
+  }
+}
+
+function exitApplication(): void {
+  if (quitFallback) {
+    clearTimeout(quitFallback);
+    quitFallback = null;
+  }
+
+  try {
+    tray?.destroy();
+  } catch {
+    // Continue to process termination even if macOS has already removed it.
+  } finally {
+    tray = null;
+  }
+  try {
+    overlayManager?.dispose();
+  } catch {
+    // Continue so a damaged overlay cannot keep FaceGuard alive.
+  } finally {
+    overlayManager = null;
+  }
+  try {
+    if (controlWindow && !controlWindow.isDestroyed()) {
+      controlWindow.destroy();
+    }
+  } catch {
+    // Continue so a damaged hidden window cannot keep FaceGuard alive.
+  } finally {
+    controlWindow = null;
+    // app.exit is intentionally placed in the final cleanup block so a
+    // failure in tray, overlay, or hidden-window disposal cannot leave a
+    // background FaceGuard process running.
+    app.exit(0);
   }
 }
 
@@ -81,9 +123,9 @@ function requestQuit(): void {
   overlayManager?.hideAll();
   if (sessionActive && controlWindow && !controlWindow.isDestroyed()) {
     requestSessionEnd();
-    quitFallback = setTimeout(() => app.quit(), 1_000);
+    quitFallback = setTimeout(exitApplication, 1_000);
   } else {
-    app.quit();
+    exitApplication();
   }
 }
 
@@ -134,7 +176,10 @@ function createControlWindow(): BrowserWindow {
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
     );
   }
-  window.once("ready-to-show", () => window.show());
+  window.once("ready-to-show", () => {
+    window.maximize();
+    window.show();
+  });
   return window;
 }
 
@@ -188,6 +233,17 @@ function registerIpc(): void {
     updateTray();
   });
 
+  ipcMain.handle(IPC.decoyImage, async (event, message: DecoyImageMessage) => {
+    if (!isControlSender(event.sender.id)) return false;
+    if (!isDecoyImageMessage(message)) return false;
+    overlayManager?.setDecoyImage(message.dataUrl);
+    if (message.dataUrl === null) return clearSavedDecoy();
+    return saveDecoy(message.dataUrl, message.name ?? "Custom image");
+  });
+  ipcMain.handle(IPC.loadDecoyImage, (event) =>
+    isControlSender(event.sender.id) ? loadSavedDecoy() : null,
+  );
+
   ipcMain.on(IPC.sessionEnded, (event) => {
     if (!isControlSender(event.sender.id)) return;
     finishSession();
@@ -205,6 +261,10 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) {
+    app.exit(0);
+    return;
+  }
   if (process.platform === "darwin") app.dock?.hide();
   controlWindow = createControlWindow();
   configurePermissions();
@@ -233,6 +293,7 @@ app.whenReady().then(() => {
   });
 });
 
+app.on("second-instance", showControlWindow);
 app.on("activate", showControlWindow);
 app.on("window-all-closed", () => {
   // FaceGuard remains available from the macOS menu bar.

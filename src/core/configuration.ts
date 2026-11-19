@@ -5,7 +5,8 @@ export type EnrolmentDirection = {
     | "upper-left"
     | "lower-left"
     | "upper-right"
-    | "lower-right";
+    | "lower-right"
+    | "lower-centre";
 };
 
 export type FaceGuardConfiguration = {
@@ -43,22 +44,23 @@ export const FACEGUARD_CONFIG: FaceGuardConfiguration = {
     maxDetectedFaces: 5,
   },
   enrolment: {
-    sampleCount: 5,
+    sampleCount: 6,
     directions: [
       { label: "centre", position: "centre" },
       { label: "upper-left corner", position: "upper-left" },
       { label: "lower-left corner", position: "lower-left" },
       { label: "upper-right corner", position: "upper-right" },
       { label: "lower-right corner", position: "lower-right" },
+      { label: "bottom centre (typing position)", position: "lower-centre" },
     ],
   },
   monitoring: {
     intervalMs: 650,
-    absencePersistence: 3,
+    absencePersistence: 6,
     additionalViewerPersistence: 1,
     uncertainPersistence: 3,
     concealmentDelayMs: 0,
-    recoverySafeObservations: 2,
+    recoverySafeObservations: 1,
     recoveryDelayMs: 0,
   },
 };

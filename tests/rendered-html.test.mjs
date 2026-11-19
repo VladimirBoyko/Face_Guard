@@ -24,11 +24,13 @@ test("server-renders the FaceGuard local-only experience", async () => {
   assert.match(html, /Start private session/);
   assert.match(html, /On-device analysis/);
   assert.match(html, /No cloud or account/);
+  assert.match(html, /Choose own picture/);
+  assert.match(html, /data:image\/png;base64,/);
   assert.match(html, /protects this FaceGuard workspace/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
-test("viewing-state rules fail closed and recover conservatively", async () => {
+test("viewing-state rules fail closed and recover on configured safe evidence", async () => {
   const {
     advanceProtection,
     classifyObservation,
@@ -85,21 +87,20 @@ test("viewing-state rules fail closed and recover conservatively", async () => {
     unsafeHits: 0,
   };
   state = advanceProtection(state, "safe");
-  assert.equal(state.protected, true);
-  state = advanceProtection(state, "safe");
   assert.equal(state.protected, false);
   state = advanceProtection(state, "extra-viewer");
   assert.equal(state.protected, true);
 
   state = { ...POST_ENROLMENT_PROTECTION };
-  state = advanceProtection(state, "absent");
-  state = advanceProtection(state, "absent");
+  for (let observation = 0; observation < 5; observation += 1) {
+    state = advanceProtection(state, "absent");
+  }
   assert.equal(state.protected, false);
   state = advanceProtection(state, "absent");
   assert.equal(state.protected, true);
 });
 
-test("uses five guided enrolment photos and the supplied local decoy", async () => {
+test("uses six guided enrolment photos and a selectable local decoy", async () => {
   const source = await readFile(
     new URL("../app/FaceGuardApp.tsx", import.meta.url),
     "utf8",
@@ -109,10 +110,53 @@ test("uses five guided enrolment photos and the supplied local decoy", async () 
     "utf8",
   );
   assert.match(source, /FACEGUARD_CONFIG\.enrolment\.sampleCount/);
-  assert.match(source, /src="\/decoy-government\.png"/);
+  assert.match(source, /decoy-government\.png\?inline/);
+  assert.match(source, /customDecoy\?\.dataUrl \?\? defaultDecoyImage/);
+  assert.match(source, /Choose own picture/);
+  assert.match(source, /className="gaze-trigger"/);
+  assert.match(source, /onClick=\{captureSample\}/);
+  assert.match(source, /do not follow it only with your eyes/);
+  assert.match(source, /Turn your head towards your keyboard for the best result/);
   assert.match(configuration, /position: "centre"/);
   assert.match(configuration, /position: "upper-left"/);
   assert.match(configuration, /position: "lower-left"/);
   assert.match(configuration, /position: "upper-right"/);
   assert.match(configuration, /position: "lower-right"/);
+  assert.match(configuration, /position: "lower-centre"/);
+  assert.match(configuration, /sampleCount: 6/);
+});
+
+test("desktop quit is explicit and prevents duplicate background instances", async () => {
+  const source = await readFile(
+    new URL("../src/desktop/main.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /app\.requestSingleInstanceLock\(\)/);
+  assert.match(source, /tray\?\.destroy\(\)/);
+  assert.match(source, /overlayManager\?\.dispose\(\)/);
+  assert.match(source, /controlWindow\.destroy\(\)/);
+  assert.match(source, /app\.exit\(0\)/);
+  assert.match(source, /setTimeout\(exitApplication, 1_000\)/);
+});
+
+test("macOS package opens FaceGuard once after successful installation", async () => {
+  const script = await readFile(
+    new URL("../installer/scripts/postinstall", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(script, /launchctl asuser/);
+  assert.match(script, /open \/Applications\/FaceGuard\.app/);
+  assert.doesNotMatch(script, /setLoginItemSettings|LaunchAgent/);
+});
+
+test("desktop control window launches maximized and remains maximized", async () => {
+  const main = await readFile(
+    new URL("../src/desktop/main.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(main, /window\.maximize\(\)/);
+  assert.doesNotMatch(main, /unmaximize\(\)|restoreAfterEnrolment/);
 });
