@@ -29,9 +29,9 @@ function applySequence(sequence, initial = POST_ENROLMENT_PROTECTION, config) {
   );
 }
 
-test("five valid enrolment samples produce one normalised descriptor", () => {
+test("six valid enrolment samples produce one normalised descriptor", () => {
   const samples = [];
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 6; index += 1) {
     const decision = evaluateEnrolmentFaces(
       [{ boxScore: 0.9, embedding: [1, index + 1, 0.5] }],
       0.5,
@@ -75,26 +75,30 @@ test("temporary recognition loss does not conceal before persistence", () => {
   assert.equal(state.observation, "safe");
 });
 
-test("absence conceals on the configured third observation", () => {
-  const before = applySequence(["absent", "absent"]);
+test("absence waits twice as many checks and conceals on the sixth observation", () => {
+  const before = applySequence([
+    "absent",
+    "absent",
+    "absent",
+    "absent",
+    "absent",
+  ]);
   const after = advanceProtection(before, "absent");
   assert.equal(before.protected, false);
   assert.equal(after.protected, true);
 });
 
-test("additional viewer fails closed immediately and recovers conservatively", () => {
+test("additional viewer fails closed immediately and one safe check recovers", () => {
   const concealed = applySequence(["extra-viewer"]);
   assert.equal(concealed.protected, true);
-  const stillConcealed = advanceProtection(concealed, "safe");
-  assert.equal(stillConcealed.protected, true);
-  const recovered = advanceProtection(stillConcealed, "safe");
+  const recovered = advanceProtection(concealed, "safe");
   assert.equal(recovered.protected, false);
 });
 
 test("uncertain observations conceal and a returning user recovers", () => {
   const concealed = applySequence(["uncertain", "uncertain", "uncertain"]);
   assert.equal(concealed.protected, true);
-  const recovered = applySequence(["safe", "safe"], concealed);
+  const recovered = applySequence(["safe"], concealed);
   assert.equal(recovered.protected, false);
 });
 
@@ -194,7 +198,7 @@ test("transition timing remains derived from central configuration", () => {
   );
   assert.equal(
     observedSpan(FACEGUARD_CONFIG.monitoring.absencePersistence),
-    1_300,
+    3_250,
   );
   assert.equal(
     observedSpan(FACEGUARD_CONFIG.monitoring.uncertainPersistence),
@@ -202,11 +206,11 @@ test("transition timing remains derived from central configuration", () => {
   );
   assert.equal(
     observedSpan(FACEGUARD_CONFIG.monitoring.recoverySafeObservations),
-    650,
+    0,
   );
   // Add at most one interval for an event occurring just after a check.
   assert.equal(
     observedSpan(FACEGUARD_CONFIG.monitoring.absencePersistence) + interval,
-    1_950,
+    3_900,
   );
 });

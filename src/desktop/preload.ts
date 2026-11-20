@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
   IPC,
+  type DecoyImageMessage,
   type FaceGuardDesktopBridge,
   type ProtectionStateMessage,
   type RendererTechnicalLog,
@@ -12,6 +13,9 @@ const bridge: FaceGuardDesktopBridge = {
   sessionStarted: () => ipcRenderer.send(IPC.sessionStarted),
   protectionStateChanged: (message: ProtectionStateMessage) =>
     ipcRenderer.send(IPC.protectionState, message),
+  decoyImageChanged: (message: DecoyImageMessage) =>
+    ipcRenderer.invoke(IPC.decoyImage, message),
+  loadSavedDecoyImage: () => ipcRenderer.invoke(IPC.loadDecoyImage),
   sessionEnded: () => ipcRenderer.send(IPC.sessionEnded),
   hideControlWindow: () => ipcRenderer.send(IPC.hideControlWindow),
   technicalLog: (message: RendererTechnicalLog) =>

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   advanceProtection,
   classifyObservation,
@@ -18,6 +24,12 @@ import {
   clearDescriptorSamples,
 } from "../src/core/descriptor";
 import { evaluateEnrolmentFaces } from "../src/core/enrolment";
+import {
+  isAllowedDecoyType,
+  isSafeDecoyDataUrl,
+  MAX_CUSTOM_DECOY_BYTES,
+} from "../src/core/decoy";
+import defaultDecoyImage from "../public/decoy-government.png?inline";
 import { logTechnicalEvent } from "../src/core/logger";
 import {
   clearSessionBiometricMemory,
@@ -96,6 +108,10 @@ export function FaceGuardApp() {
     useState<ProtectionState>(INITIAL_PROTECTION);
   const [lastCheckMs, setLastCheckMs] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [customDecoy, setCustomDecoy] = useState<{
+    dataUrl: string;
+    name: string;
+  } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -110,6 +126,21 @@ export function FaceGuardApp() {
   const desktopProtectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+
+  const decoyImageSrc = customDecoy?.dataUrl ?? defaultDecoyImage;
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    let active = true;
+    void desktopBridge.loadSavedDecoyImage().then((saved) => {
+      if (!active || !saved) return;
+      setCustomDecoy(saved);
+      void desktopBridge.decoyImageChanged(saved);
+    });
+    return () => {
+      active = false;
+    };
+  }, [desktopBridge]);
 
   const updatePhase = useCallback((next: Phase) => {
     phaseRef.current = next;
@@ -188,6 +219,59 @@ export function FaceGuardApp() {
     if (!desktopBridge) return;
     return desktopBridge.onSessionEndRequested(endSession);
   }, [desktopBridge, endSession]);
+
+  const chooseDecoyImage = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+      if (!isAllowedDecoyType(file.type)) {
+        setMessage("Choose a PNG, JPEG or WebP image for the decoy.");
+        return;
+      }
+      if (file.size > MAX_CUSTOM_DECOY_BYTES) {
+        setMessage("The custom decoy image must be 8 MB or smaller.");
+        return;
+      }
+
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () =>
+            typeof reader.result === "string"
+              ? resolve(reader.result)
+              : reject(new Error("Image could not be read"));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+        if (!isSafeDecoyDataUrl(dataUrl)) {
+          setMessage("FaceGuard could not use this image. Try another file.");
+          return;
+        }
+        if (desktopBridge) {
+          const saved = await desktopBridge.decoyImageChanged({
+            dataUrl,
+            name: file.name,
+          });
+          if (!saved) {
+            setMessage("FaceGuard could not save this picture. Try another file.");
+            return;
+          }
+        }
+        setCustomDecoy({ dataUrl, name: file.name });
+        setMessage("");
+      } catch {
+        setMessage("FaceGuard could not read this image. Try another file.");
+      }
+    },
+    [desktopBridge],
+  );
+
+  const useDefaultDecoy = useCallback(() => {
+    setCustomDecoy(null);
+    void desktopBridge?.decoyImageChanged({ dataUrl: null });
+    setMessage("");
+  }, [desktopBridge]);
 
   useEffect(() => {
     if (!desktopBridge || phase !== "monitoring") return;
@@ -418,7 +502,7 @@ export function FaceGuardApp() {
         beginMonitoring();
       } else {
         setMessage(
-          `Photo ${count} accepted. Follow the red marker for the next photo.`,
+          `Photo ${count} accepted. Turn your head towards the next red marker.`,
         );
       }
     } catch {
@@ -447,15 +531,14 @@ export function FaceGuardApp() {
           </span>
           <span>FaceGuard</span>
         </a>
-        <div className="local-badge">
-          <span aria-hidden="true" /> Local-only prototype
-        </div>
       </header>
 
       <section className="hero" id="top">
-        <div className="hero-copy">
+        <div className="hero-heading">
           <p className="eyebrow">Active-session privacy</p>
           <h1>Your screen should know when to look away.</h1>
+        </div>
+        <div className="hero-copy">
           <p className="hero-lead">
             FaceGuard uses your webcam and on-device face analysis to conceal
             this workspace when you leave or another viewer appears.
@@ -474,8 +557,41 @@ export function FaceGuardApp() {
               </button>
               <p>
                 Your browser will ask for camera permission. Face images are
-                processed locally and are never saved by FaceGuard.
+                processed locally and never saved. {isDesktop
+                  ? "Your chosen decoy is stored only on this Mac."
+                  : "Your custom decoy remains only in this browser session."}
               </p>
+              <div className="decoy-picker">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={decoyImageSrc} alt="Selected decoy preview" />
+                <div className="decoy-picker-copy">
+                  <span>Protection image</span>
+                  <strong>
+                    {customDecoy ? customDecoy.name : "Default image"}
+                  </strong>
+                  <p>
+                    {customDecoy
+                      ? "Custom image saved locally for future sessions."
+                      : "Use the supplied image or choose your own."}
+                  </p>
+                  <div className="decoy-picker-actions">
+                    <label className="file-button" htmlFor="decoy-file">
+                      Choose own picture
+                    </label>
+                    <input
+                      accept="image/png,image/jpeg,image/webp"
+                      id="decoy-file"
+                      onChange={chooseDecoyImage}
+                      type="file"
+                    />
+                    {customDecoy && (
+                      <button className="text-button" onClick={useDefaultDecoy}>
+                        Use default
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -497,8 +613,9 @@ export function FaceGuardApp() {
               </div>
               <h2>Confirm the authorised user</h2>
               <p>
-                Be alone in frame and follow the red marker for each photo.
-                Five different views become one temporary descriptor.
+                Be alone in frame and turn your head towards each red marker —
+                do not follow it only with your eyes. Six different views,
+                including a typing position, become one temporary descriptor.
               </p>
               <div className="sample-progress" aria-hidden="true">
                 {Array.from({ length: ENROLMENT_SAMPLES }, (_, index) => (
@@ -609,7 +726,7 @@ export function FaceGuardApp() {
         </div>
         <ol>
           <li><span>01</span><strong>Consent</strong><p>You intentionally grant camera access for each session.</p></li>
-          <li><span>02</span><strong>Enrol</strong><p>Five guided photos form a temporary descriptor in page memory.</p></li>
+          <li><span>02</span><strong>Enrol</strong><p>Six guided photos form a temporary descriptor in page memory.</p></li>
           <li><span>03</span><strong>Protect</strong><p>Unsafe or uncertain viewing conditions conceal the workspace.</p></li>
           <li><span>04</span><strong>Clear</strong><p>Ending the session stops the camera and removes the descriptor.</p></li>
         </ol>
@@ -629,9 +746,20 @@ export function FaceGuardApp() {
           className={`gaze-target ${currentPhotoDirection.position}`}
           aria-live="polite"
         >
-          <span className="gaze-dot" aria-hidden="true" />
+          <button
+            aria-label={`Take photo ${sampleCount + 1} while looking ${currentPhotoDirection.label}`}
+            className="gaze-trigger"
+            onClick={captureSample}
+            type="button"
+          >
+            <span className="gaze-dot" aria-hidden="true" />
+          </button>
           <div className="gaze-message">
-            <strong>Look here and press the button to take photo</strong>
+            <strong>
+              {currentPhotoDirection.position === "lower-centre"
+                ? "Turn your head towards your keyboard for the best result, then click the red spot"
+                : "Turn your head towards this red spot, then click it to take the photo"}
+            </strong>
             <small>
               Photo {sampleCount + 1} · {currentPhotoDirection.label}
             </small>
@@ -645,8 +773,8 @@ export function FaceGuardApp() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             className="decoy-image"
-            src="/decoy-government.png"
-            alt="Australian Government Department of Finance confidentiality guidance"
+            src={decoyImageSrc}
+            alt="Selected FaceGuard decoy"
           />
           <div className="decoy-actions">
             {!isFullscreen && (

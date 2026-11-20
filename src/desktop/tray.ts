@@ -22,6 +22,9 @@ export class FaceGuardTray {
     const image = nativeImage.createFromDataURL(ICON).resize({ width: 18, height: 18 });
     image.setTemplateImage(true);
     this.tray = new Tray(image);
+    // Keep the menu-bar control discoverable even when macOS fails to render
+    // the template SVG (this can happen in development and after app updates).
+    if (process.platform === "darwin") this.tray.setTitle("FG");
     this.tray.setToolTip("FaceGuard 2.0");
     this.tray.on("click", actions.showControlWindow);
     this.rebuild();
@@ -41,22 +44,25 @@ export class FaceGuardTray {
   private rebuild(): void {
     this.tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: "Show FaceGuard", click: this.actions.showControlWindow },
+        {
+          label: "Show FaceGuard",
+          click: () => this.actions.showControlWindow(),
+        },
         { label: `Status: ${this.stateLabel}`, enabled: false },
         { type: "separator" },
         {
           label: "End session and clear memory",
           enabled: this.sessionActive,
-          click: this.actions.endSession,
+          click: () => this.actions.endSession(),
         },
         {
           label: "Test desktop protection overlay",
           type: "checkbox",
           checked: this.manualTest,
-          click: this.actions.toggleTestOverlay,
+          click: () => this.actions.toggleTestOverlay(),
         },
         { type: "separator" },
-        { label: "Quit FaceGuard", click: this.actions.quit },
+        { label: "Quit FaceGuard", click: () => this.actions.quit() },
       ]),
     );
   }

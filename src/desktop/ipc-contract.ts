@@ -4,6 +4,8 @@ export const IPC = {
   cameraPermission: "faceguard:camera-permission",
   sessionStarted: "faceguard:session-started",
   protectionState: "faceguard:protection-state",
+  decoyImage: "faceguard:decoy-image",
+  loadDecoyImage: "faceguard:load-decoy-image",
   sessionEnded: "faceguard:session-ended",
   requestSessionEnd: "faceguard:request-session-end",
   hideControlWindow: "faceguard:hide-control-window",
@@ -13,6 +15,16 @@ export const IPC = {
 export type ProtectionStateMessage = {
   protected: boolean;
   observation: ViewingState;
+};
+
+export type DecoyImageMessage = {
+  dataUrl: string | null;
+  name?: string;
+};
+
+export type SavedDecoyImage = {
+  dataUrl: string;
+  name: string;
 };
 
 export type RendererTechnicalLog = {
@@ -31,6 +43,8 @@ export type FaceGuardDesktopBridge = {
   requestCameraPermission: () => Promise<boolean>;
   sessionStarted: () => void;
   protectionStateChanged: (message: ProtectionStateMessage) => void;
+  decoyImageChanged: (message: DecoyImageMessage) => Promise<boolean>;
+  loadSavedDecoyImage: () => Promise<SavedDecoyImage | null>;
   sessionEnded: () => void;
   hideControlWindow: () => void;
   technicalLog: (message: RendererTechnicalLog) => void;

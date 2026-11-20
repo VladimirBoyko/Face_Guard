@@ -82,14 +82,15 @@ bar. Closing its main window hides it; it continues running from the menu bar.
 1. Select **Start private session**.
 2. Allow FaceGuard camera access when macOS asks.
 3. Be the only person visible in the camera.
-4. Take all five enrolment photos, following each red position marker.
-5. After the fifth accepted photo, FaceGuard starts monitoring automatically.
+4. Take all six enrolment photos, following each red position marker. The sixth
+   marker is at the bottom centre to capture a typical typing posture.
+5. After the sixth accepted photo, FaceGuard starts monitoring automatically.
 6. Hide the main window if desired; desktop protection continues from the menu
    bar.
 7. Select **End session** in the window or **End session and clear memory** in
    the menu-bar menu to stop the camera and clear temporary descriptors.
 
-All webcam analysis and biometric descriptors remain on the device. The five
+All webcam analysis and biometric descriptors remain on the device. The six
 photos are converted into temporary in-memory descriptors and are not uploaded
 or saved by FaceGuard.
 
@@ -147,19 +148,19 @@ pnpm run desktop:package
 ## Current MVP flow
 
 1. Explain privacy behaviour and request camera consent.
-2. Capture five guided single-user enrolment photos.
-3. Average the five photos into an in-memory face descriptor.
+2. Capture six guided single-user enrolment photos.
+3. Average the six photos into an in-memory face descriptor.
 4. Classify continuous observations as safe, additional viewer, absent, or
    uncertain.
 5. Show one native decoy window per detected display for persistent unsafe and
    uncertain states.
 6. Stop the webcam and clear biometric session state when the session ends.
 
-The current similarity threshold is `0.45`. Absence and uncertain observations
-must persist across three checks before protection activates; an additional face
-still activates protection immediately. These remain prototype defaults and must
-be tuned using the project's documented test matrix before accuracy claims are
-made. Desktop limits and the repeatable proof-of-concept test procedure are in
+The current similarity threshold is `0.45`. Absence must persist across six
+checks before protection activates, while uncertain observations require three
+checks. An additional face still activates protection immediately. These remain
+prototype defaults and must be tuned using the project's documented test matrix
+before accuracy claims are made. Desktop limits and the repeatable proof-of-concept test procedure are in
 [docs/desktop-poc.md](docs/desktop-poc.md). Step 3 automated results, runtime
 observations, and the manual test backlog are in
 [docs/step3-validation.md](docs/step3-validation.md) and

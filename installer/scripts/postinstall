@@ -1,0 +1,14 @@
+#!/bin/sh
+
+# Open FaceGuard in the signed-in user's macOS session after Installer has
+# successfully copied the application to /Applications.
+console_user=$(/usr/bin/stat -f '%Su' /dev/console)
+
+if [ -z "$console_user" ] || [ "$console_user" = "root" ] || [ "$console_user" = "loginwindow" ]; then
+  exit 0
+fi
+
+user_id=$(/usr/bin/id -u "$console_user")
+/bin/launchctl asuser "$user_id" /usr/bin/open /Applications/FaceGuard.app
+
+exit 0

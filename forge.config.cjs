@@ -6,6 +6,7 @@ module.exports = {
   packagerConfig: {
     asar: true,
     name: "FaceGuard",
+    icon: "assets/FaceGuard.icns",
     appBundleId: "au.edu.torrens.faceguard.prototype",
     appCategoryType: "public.app-category.utilities",
     extendInfo: {

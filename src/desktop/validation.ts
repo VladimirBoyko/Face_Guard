@@ -1,7 +1,9 @@
 import type {
+  DecoyImageMessage,
   ProtectionStateMessage,
   RendererTechnicalLog,
 } from "./ipc-contract.ts";
+import { isSafeDecoyDataUrl } from "../core/decoy.ts";
 
 const VIEWING_STATES = new Set([
   "safe",
@@ -25,6 +27,16 @@ export function isProtectionStateMessage(
       typeof candidate.protected === "boolean" &&
       typeof candidate.observation === "string" &&
       VIEWING_STATES.has(candidate.observation),
+  );
+}
+
+export function isDecoyImageMessage(value: unknown): value is DecoyImageMessage {
+  const candidate = record(value);
+  return Boolean(
+    candidate &&
+      (candidate.dataUrl === null || isSafeDecoyDataUrl(candidate.dataUrl)) &&
+      (candidate.name === undefined ||
+        (typeof candidate.name === "string" && candidate.name.length <= 160)),
   );
 }
 

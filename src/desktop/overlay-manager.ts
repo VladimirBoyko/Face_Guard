@@ -1,17 +1,32 @@
-import { BrowserWindow, screen, type Display } from "electron";
+import {
+  BrowserWindow,
+  protocol,
+  screen,
+  type Display,
+} from "electron";
 import decoyImage from "../../public/decoy-government.png?inline";
 import { logTechnicalEvent } from "../core/logger.ts";
 import type { ViewingState } from "../core/protection-state.ts";
+import { decodeDecoyDataUrl, type DecoyPayload } from "./decoy-payload.ts";
 import { shouldShowOverlay } from "./overlay-policy.ts";
 
-function overlayDocument(): string {
+const DECOY_SCHEME = "faceguard-decoy";
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: DECOY_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
+]);
+
+function overlayDocument(imageSource: string): string {
   return `<!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><title>FaceGuard Protection</title><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
+<html lang="en"><head><meta charset="UTF-8"><title>FaceGuard Protection</title><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: faceguard-decoy:; style-src 'unsafe-inline'">
 <style>
 html,body{height:100%;margin:0;overflow:hidden;background:#edf0f3;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
 img{height:100%;width:100%;object-fit:cover;object-position:center top}
 .status{position:fixed;left:18px;bottom:18px;padding:9px 12px;border-radius:999px;background:rgba(20,29,25,.88);color:#fff;font-size:11px;font-weight:700;letter-spacing:.02em;box-shadow:0 8px 30px rgba(0,0,0,.22)}
-</style></head><body><img alt="Protected FaceGuard decoy" src="${decoyImage}"><div class="status">FaceGuard protection active · use the menu-bar icon to end the session</div></body></html>`;
+</style></head><body><img alt="Protected FaceGuard decoy" src="${imageSource}"><div class="status">FaceGuard protection active · use the menu-bar icon to end the session</div></body></html>`;
 }
 
 function dataUrl(html: string): string {
@@ -23,8 +38,22 @@ export class OverlayManager {
   private protectedBySession = false;
   private manualTest = false;
   private observation: ViewingState = "uncertain";
+  private customDecoyImage: DecoyPayload | null = null;
+  private customDecoyRevision = 0;
 
   initialise(): void {
+    protocol.handle(DECOY_SCHEME, () => {
+      if (!this.customDecoyImage) {
+        return new Response(null, { status: 404 });
+      }
+      const body = Uint8Array.from(this.customDecoyImage.bytes).buffer;
+      return new Response(body, {
+        headers: {
+          "Content-Type": this.customDecoyImage.mimeType,
+          "Cache-Control": "no-store",
+        },
+      });
+    });
     this.reconcileDisplays();
     screen.on("display-added", this.reconcileDisplays);
     screen.on("display-removed", this.reconcileDisplays);
@@ -37,6 +66,8 @@ export class OverlayManager {
     screen.removeListener("display-metrics-changed", this.reconcileDisplays);
     for (const window of this.windows.values()) window.destroy();
     this.windows.clear();
+    protocol.unhandle(DECOY_SCHEME);
+    this.customDecoyImage = null;
   }
 
   setProtection(protectedState: boolean, observation: ViewingState): void {
@@ -56,6 +87,14 @@ export class OverlayManager {
 
   displayCount(): number {
     return this.windows.size;
+  }
+
+  setDecoyImage(dataUrl: string | null): void {
+    this.customDecoyImage = dataUrl ? decodeDecoyDataUrl(dataUrl) : null;
+    this.customDecoyRevision += 1;
+    for (const window of this.windows.values()) {
+      if (!window.isDestroyed()) this.loadOverlay(window);
+    }
   }
 
   endSession(): void {
@@ -134,8 +173,15 @@ export class OverlayManager {
     });
     window.setHiddenInMissionControl(true);
     window.setContentProtection(true);
-    void window.loadURL(dataUrl(overlayDocument()));
+    this.loadOverlay(window);
     return window;
+  }
+
+  private loadOverlay(window: BrowserWindow): void {
+    const imageSource = this.customDecoyImage
+      ? `${DECOY_SCHEME}://current/image?v=${this.customDecoyRevision}`
+      : decoyImage;
+    void window.loadURL(dataUrl(overlayDocument(imageSource)));
   }
 
   private applyVisibility(reason: string): void {

@@ -3,12 +3,19 @@ import test from "node:test";
 
 import { FACEGUARD_CONFIG } from "../src/core/configuration.ts";
 import {
+  isAllowedDecoyType,
+  isSafeDecoyDataUrl,
+  MAX_CUSTOM_DECOY_BYTES,
+} from "../src/core/decoy.ts";
+import { decodeDecoyDataUrl } from "../src/desktop/decoy-payload.ts";
+import {
   averageDescriptors,
   clearDescriptor,
   clearDescriptorSamples,
 } from "../src/core/descriptor.ts";
 import { advanceProtection } from "../src/core/protection-state.ts";
 import {
+  isDecoyImageMessage,
   isProtectionStateMessage,
   sanitiseRendererLog,
 } from "../src/desktop/validation.ts";
@@ -16,11 +23,11 @@ import {
 test("central configuration retains the prototype defaults", () => {
   assert.equal(FACEGUARD_CONFIG.recognition.matchThreshold, 0.45);
   assert.equal(FACEGUARD_CONFIG.recognition.detectorConfidence, 0.6);
-  assert.equal(FACEGUARD_CONFIG.enrolment.sampleCount, 5);
-  assert.equal(FACEGUARD_CONFIG.monitoring.absencePersistence, 3);
+  assert.equal(FACEGUARD_CONFIG.enrolment.sampleCount, 6);
+  assert.equal(FACEGUARD_CONFIG.monitoring.absencePersistence, 6);
   assert.equal(FACEGUARD_CONFIG.monitoring.additionalViewerPersistence, 1);
   assert.equal(FACEGUARD_CONFIG.monitoring.uncertainPersistence, 3);
-  assert.equal(FACEGUARD_CONFIG.monitoring.recoverySafeObservations, 2);
+  assert.equal(FACEGUARD_CONFIG.monitoring.recoverySafeObservations, 1);
 });
 
 test("unsafe observation persistence is independent", () => {
@@ -83,4 +90,31 @@ test("desktop logging drops biometric-shaped and unknown renderer fields", () =>
       latencyMs: 10,
     },
   );
+});
+
+test("custom decoy images are limited to safe local image data", () => {
+  const pngDataUrl = "data:image/png;base64,aGVsbG8=";
+
+  assert.equal(isAllowedDecoyType("image/png"), true);
+  assert.equal(isAllowedDecoyType("image/jpeg"), true);
+  assert.equal(isAllowedDecoyType("image/webp"), true);
+  assert.equal(isAllowedDecoyType("image/svg+xml"), false);
+  assert.equal(MAX_CUSTOM_DECOY_BYTES, 8 * 1024 * 1024);
+  assert.equal(isSafeDecoyDataUrl(pngDataUrl), true);
+  assert.equal(isSafeDecoyDataUrl("data:image/svg+xml,<svg/>"), false);
+  assert.equal(isDecoyImageMessage({ dataUrl: pngDataUrl }), true);
+  assert.equal(isDecoyImageMessage({ dataUrl: null }), true);
+  assert.equal(
+    isDecoyImageMessage({ dataUrl: "https://example.com/decoy.png" }),
+    false,
+  );
+});
+
+test("custom decoy data is decoded for the native overlay without disk storage", () => {
+  const dataUrl = `data:image/png;base64,${Buffer.from("local-image").toString("base64")}`;
+  const payload = decodeDecoyDataUrl(dataUrl);
+
+  assert.equal(payload?.mimeType, "image/png");
+  assert.deepEqual(Buffer.from(payload?.bytes ?? []), Buffer.from("local-image"));
+  assert.equal(decodeDecoyDataUrl("https://example.com/image.png"), null);
 });
