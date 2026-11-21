@@ -12,6 +12,7 @@ export type EnrolmentDirection = {
 export type FaceGuardConfiguration = {
   recognition: {
     matchThreshold: number;
+    extraViewerRecoveryThreshold: number;
     detectorConfidence: number;
     enrolmentBoxScore: number;
     maxDetectedFaces: number;
@@ -39,6 +40,7 @@ export type FaceGuardConfiguration = {
 export const FACEGUARD_CONFIG: FaceGuardConfiguration = {
   recognition: {
     matchThreshold: 0.45,
+    extraViewerRecoveryThreshold: 0.55,
     detectorConfidence: 0.6,
     enrolmentBoxScore: 0.5,
     maxDetectedFaces: 5,
@@ -60,7 +62,7 @@ export const FACEGUARD_CONFIG: FaceGuardConfiguration = {
     additionalViewerPersistence: 1,
     uncertainPersistence: 3,
     concealmentDelayMs: 0,
-    recoverySafeObservations: 1,
+    recoverySafeObservations: 2,
     recoveryDelayMs: 0,
   },
 };
@@ -71,6 +73,10 @@ export function validateFaceGuardConfiguration(
   const errors: string[] = [];
   const probabilityValues = [
     ["recognition.matchThreshold", config.recognition.matchThreshold],
+    [
+      "recognition.extraViewerRecoveryThreshold",
+      config.recognition.extraViewerRecoveryThreshold,
+    ],
     ["recognition.detectorConfidence", config.recognition.detectorConfidence],
     ["recognition.enrolmentBoxScore", config.recognition.enrolmentBoxScore],
   ] as const;
@@ -78,6 +84,15 @@ export function validateFaceGuardConfiguration(
     if (!Number.isFinite(value) || value < 0 || value > 1) {
       errors.push(`${name} must be between 0 and 1`);
     }
+  }
+
+  if (
+    config.recognition.extraViewerRecoveryThreshold <
+    config.recognition.matchThreshold
+  ) {
+    errors.push(
+      "recognition.extraViewerRecoveryThreshold must be at least recognition.matchThreshold",
+    );
   }
 
   const positiveIntegers = [

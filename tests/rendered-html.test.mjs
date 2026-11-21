@@ -45,6 +45,7 @@ test("viewing-state rules fail closed and recover on configured safe evidence", 
     observation: "safe",
     safeHits: RECOVERY_SAFE_HITS,
     unsafeHits: 0,
+    extraViewerLatched: false,
   });
 
   assert.equal(
@@ -85,7 +86,10 @@ test("viewing-state rules fail closed and recover on configured safe evidence", 
     observation: "uncertain",
     safeHits: 0,
     unsafeHits: 0,
+    extraViewerLatched: false,
   };
+  state = advanceProtection(state, "safe");
+  assert.equal(state.protected, true);
   state = advanceProtection(state, "safe");
   assert.equal(state.protected, false);
   state = advanceProtection(state, "extra-viewer");

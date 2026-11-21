@@ -184,10 +184,19 @@ pnpm run desktop:package
    uncertain states.
 6. Stop the webcam and clear biometric session state when the session ends.
 
-The current similarity threshold is `0.45`. Absence must persist across six
-checks before protection activates, while uncertain observations require three
-checks. An additional face still activates protection immediately. These remain
-prototype defaults and must be tuned using the project's documented test matrix
+The normal similarity threshold is `0.45`. A single mismatched or temporarily
+unclear face follows the normal absence persistence rule. Detecting an
+additional face immediately latches protection; that latch survives later
+absent or uncertain frames and uses a separate `0.55` recovery threshold.
+FaceGuard requires two consecutive authorised-user matches before removing
+latched protection.
+The second recovery scan runs immediately after the first successful scan rather
+than waiting for the normal monitoring interval.
+Absence must
+persist across six checks before protection activates, while uncertain
+observations require three checks. An additional face still activates
+protection immediately. These remain prototype defaults and must be tuned using
+the project's documented test matrix
 before accuracy claims are made. Desktop limits and the repeatable proof-of-concept test procedure are in
 [docs/desktop-poc.md](docs/desktop-poc.md). Step 3 automated results, runtime
 observations, and the manual test backlog are in
