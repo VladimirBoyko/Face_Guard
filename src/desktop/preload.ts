@@ -6,9 +6,11 @@ import {
   type ProtectionStateMessage,
   type RendererTechnicalLog,
 } from "./ipc-contract.ts";
+import { desktopPlatform } from "./platform.ts";
 
 const bridge: FaceGuardDesktopBridge = {
   isDesktop: true,
+  platform: desktopPlatform(),
   requestCameraPermission: () => ipcRenderer.invoke(IPC.cameraPermission),
   sessionStarted: () => ipcRenderer.send(IPC.sessionStarted),
   protectionStateChanged: (message: ProtectionStateMessage) =>

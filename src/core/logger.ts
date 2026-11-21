@@ -8,8 +8,23 @@ export type TechnicalLogDetails = {
   transitionMs?: number;
   reason?: string;
   displayCount?: number;
+  visibleWindowCount?: number;
   phase?: string;
 };
+
+export type TechnicalLogEntry = TechnicalLogDetails & {
+  timestamp: string;
+  scope: "renderer" | "desktop";
+  event: string;
+};
+
+let technicalLogSink: ((entry: TechnicalLogEntry) => void) | null = null;
+
+export function setTechnicalLogSink(
+  sink: ((entry: TechnicalLogEntry) => void) | null,
+): void {
+  technicalLogSink = sink;
+}
 
 /** The narrow payload excludes frames, embeddings and biometric templates. */
 export function logTechnicalEvent(
@@ -17,12 +32,12 @@ export function logTechnicalEvent(
   event: string,
   details: TechnicalLogDetails = {},
 ): void {
-  console.info(
-    JSON.stringify({
-      timestamp: new Date().toISOString(),
-      scope,
-      event,
-      ...details,
-    }),
-  );
+  const entry: TechnicalLogEntry = {
+    timestamp: new Date().toISOString(),
+    scope,
+    event,
+    ...details,
+  };
+  console.info(JSON.stringify(entry));
+  technicalLogSink?.(entry);
 }

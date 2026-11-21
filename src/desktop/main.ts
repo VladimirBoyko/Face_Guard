@@ -1,4 +1,5 @@
 import path from "node:path";
+import squirrelStartup from "electron-squirrel-startup";
 import {
   app,
   BrowserWindow,
@@ -6,7 +7,7 @@ import {
   session,
   systemPreferences,
 } from "electron";
-import { logTechnicalEvent } from "../core/logger.ts";
+import { logTechnicalEvent, setTechnicalLogSink } from "../core/logger.ts";
 import type { ViewingState } from "../core/protection-state.ts";
 import {
   IPC,
@@ -15,6 +16,7 @@ import {
   type RendererTechnicalLog,
 } from "./ipc-contract.ts";
 import { OverlayManager } from "./overlay-manager.ts";
+import { appendDiagnosticLog, showDiagnosticLog } from "./diagnostic-log.ts";
 import { shouldGrantMediaPermission } from "./permissions.ts";
 import { FaceGuardTray } from "./tray.ts";
 import {
@@ -35,7 +37,10 @@ let sessionActive = false;
 let currentObservation: ViewingState = "uncertain";
 let isQuitting = false;
 let quitFallback: ReturnType<typeof setTimeout> | null = null;
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const isSquirrelStartup = process.platform === "win32" && squirrelStartup;
+if (isSquirrelStartup) app.quit();
+const hasSingleInstanceLock =
+  !isSquirrelStartup && app.requestSingleInstanceLock();
 
 function isControlSender(senderId: number): boolean {
   return controlWindow?.webContents.id === senderId;
@@ -138,6 +143,10 @@ function createControlWindow(): BrowserWindow {
     show: false,
     title: "FaceGuard 2.0",
     backgroundColor: "#f5f7f3",
+    icon:
+      process.platform === "win32"
+        ? path.join(app.getAppPath(), "assets", "FaceGuard.ico")
+        : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -261,11 +270,19 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  if (isSquirrelStartup) {
+    app.quit();
+    return;
+  }
   if (!hasSingleInstanceLock) {
     app.exit(0);
     return;
   }
+  setTechnicalLogSink(appendDiagnosticLog);
   if (process.platform === "darwin") app.dock?.hide();
+  if (process.platform === "win32") {
+    app.setAppUserModelId("au.edu.torrens.faceguard.prototype");
+  }
   controlWindow = createControlWindow();
   configurePermissions();
   registerIpc();
@@ -285,6 +302,7 @@ app.whenReady().then(() => {
       overlayManager?.setManualTest(next);
       updateTray();
     },
+    showDiagnosticLog,
     quit: requestQuit,
   });
   updateTray();
@@ -296,13 +314,14 @@ app.whenReady().then(() => {
 app.on("second-instance", showControlWindow);
 app.on("activate", showControlWindow);
 app.on("window-all-closed", () => {
-  // FaceGuard remains available from the macOS menu bar.
+  // FaceGuard remains available from the macOS menu bar or Windows tray.
 });
 app.on("before-quit", () => {
   isQuitting = true;
   overlayManager?.hideAll();
 });
 app.on("will-quit", () => {
+  setTechnicalLogSink(null);
   tray?.destroy();
   overlayManager?.dispose();
 });

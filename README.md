@@ -1,6 +1,6 @@
 # FaceGuard
 
-FaceGuard 2.0 is a local-only macOS desktop proof of concept for active-session
+FaceGuard 2.0 is a local-only macOS and Windows desktop proof of concept for active-session
 screen privacy. It enrols an authorised user in volatile memory, analyses webcam
 frames on the device, and places a native protection window over the desktop when
 the user leaves, an additional viewer appears, or the view cannot be confirmed.
@@ -17,7 +17,7 @@ The original browser prototype remains available for comparison.
 - Native always-on-top windows provide protection independently of browser tabs.
 - Ending the session stops webcam tracks and clears the descriptor references.
 - The legacy browser mode still protects only its own fullscreen page. Use the
-  macOS desktop mode for protection across normal application windows.
+  desktop mode for protection across normal application windows.
 
 ## Run FaceGuard from GitHub
 
@@ -29,7 +29,7 @@ database, or deployment is required.
 - [Git](https://git-scm.com/downloads)
 - [Node.js](https://nodejs.org/) 22.13 or newer
 - pnpm 11
-- macOS on Apple silicon for the currently tested package
+- macOS on Apple silicon, or Windows 10/11 x64
 - A webcam
 
 After installing Node.js, enable pnpm:
@@ -68,27 +68,28 @@ pnpm install --frozen-lockfile
 
 Run this once after cloning, and again whenever `pnpm-lock.yaml` changes.
 
-### 4. Start FaceGuard 2.0 for macOS
+### 4. Start FaceGuard 2.0
 
 ```bash
 pnpm run desktop:dev
 ```
 
 FaceGuard opens as a desktop window and adds a shield icon to the macOS menu
-bar. Closing its main window hides it; it continues running from the menu bar.
+bar or Windows system tray. Closing its main window hides it; monitoring
+continues from that background control.
 
 ### 5. Start a protected session
 
 1. Select **Start private session**.
-2. Allow FaceGuard camera access when macOS asks.
+2. Allow FaceGuard camera access when macOS or Windows asks.
 3. Be the only person visible in the camera.
 4. Take all six enrolment photos, following each red position marker. The sixth
    marker is at the bottom centre to capture a typical typing posture.
 5. After the sixth accepted photo, FaceGuard starts monitoring automatically.
 6. Hide the main window if desired; desktop protection continues from the menu
-   bar.
+   bar or Windows system tray.
 7. Select **End session** in the window or **End session and clear memory** in
-   the menu-bar menu to stop the camera and clear temporary descriptors.
+   the tray menu to stop the camera and clear temporary descriptors.
 
 All webcam analysis and biometric descriptors remain on the device. The six
 photos are converted into temporary in-memory descriptors and are not uploaded
@@ -96,7 +97,8 @@ or saved by FaceGuard.
 
 ### 6. Stop FaceGuard
 
-Choose **Quit FaceGuard** from the shield menu. During development you can also
+Choose **Quit FaceGuard** from the shield menu. On Windows, open hidden tray
+icons if the shield is not immediately visible. During development you can also
 return to the terminal and press `Ctrl+C`.
 
 ### 7. Build a local macOS application
@@ -108,6 +110,24 @@ pnpm run desktop:package
 The unsigned development application is produced under
 `out/FaceGuard-darwin-arm64/FaceGuard.app`. It is for local proof-of-concept
 testing and is not notarised for distribution.
+
+### 8. Build the Windows installer
+
+On a Windows 10/11 x64 computer:
+
+```powershell
+pnpm run desktop:make:windows
+```
+
+The Squirrel installer is produced at
+`out/make/squirrel.windows/x64/FaceGuard-Setup.exe`. It creates Start Menu and
+desktop integration and installs FaceGuard for the current Windows user.
+
+You can also run the **Build Windows installer** GitHub Actions workflow. Its
+`FaceGuard-Windows-x64` artifact contains the installer and update metadata.
+The current installer is unsigned, so Windows SmartScreen may show an
+unrecognised-publisher warning until a Windows code-signing certificate is
+configured.
 
 ### Legacy browser mode
 
@@ -124,10 +144,18 @@ unrelated native applications.
 - **Camera does not start:** Open **System Settings → Privacy & Security →
   Camera**, enable FaceGuard, then restart it.
 - **The window disappeared:** FaceGuard normally hides to the macOS menu bar;
-  select its shield icon and choose **Show FaceGuard**.
+  on Windows it hides to the system tray. Select its shield icon and choose
+  **Show FaceGuard**.
 - **macOS blocks the packaged app:** The proof-of-concept build is unsigned.
   Use development mode or explicitly allow the local build in macOS security
   settings. Production distribution requires signing and notarisation.
+- **Windows warns about the installer:** The proof-of-concept installer is not
+  yet Authenticode-signed. Use it only for controlled testing until signing is
+  added.
+- **A Windows protection overlay does not appear:** Right-click the FaceGuard
+  system-tray icon and select **Test desktop protection overlay**. Select
+  **Open diagnostic log** to locate the privacy-safe technical log; it records
+  state and window visibility but never camera images or facial descriptors.
 - **Face analysis is slow:** Close other camera applications and enable browser
   hardware acceleration.
 - **Port 3000 is already in use:** Use the different local address printed by

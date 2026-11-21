@@ -101,6 +101,7 @@ export function FaceGuardApp() {
   const desktopBridge =
     typeof window === "undefined" ? undefined : window.faceGuardDesktop;
   const isDesktop = Boolean(desktopBridge);
+  const desktopPlatform = desktopBridge?.platform;
   const [phase, setPhase] = useState<Phase>("intro");
   const [message, setMessage] = useState("");
   const [sampleCount, setSampleCount] = useState(0);
@@ -558,7 +559,7 @@ export function FaceGuardApp() {
               <p>
                 Your browser will ask for camera permission. Face images are
                 processed locally and never saved. {isDesktop
-                  ? "Your chosen decoy is stored only on this Mac."
+                  ? "Your chosen decoy is stored only on this device."
                   : "Your custom decoy remains only in this browser session."}
               </p>
               <div className="decoy-picker">
@@ -652,7 +653,9 @@ export function FaceGuardApp() {
                     className="text-button"
                     onClick={() => desktopBridge?.hideControlWindow()}
                   >
-                    Hide to menu bar
+                    {desktopPlatform === "windows"
+                      ? "Hide to system tray"
+                      : "Hide to menu bar"}
                   </button>
                 )}
                 <button className="text-button" onClick={endSession}>
@@ -735,7 +738,7 @@ export function FaceGuardApp() {
       <footer>
         <p>
           {isDesktop
-            ? "Desktop prototype — protection is provided by native macOS overlay windows."
+            ? `Desktop prototype — protection is provided by native ${desktopPlatform === "windows" ? "Windows" : "macOS"} overlay windows.`
             : "Browser prototype — protects this FaceGuard workspace, not other applications or browser tabs."}
         </p>
         <span>No uploads · No database · No account</span>

@@ -1,4 +1,5 @@
 import type { ViewingState } from "../core/protection-state.ts";
+import type { DesktopPlatform } from "./platform.ts";
 
 export const IPC = {
   cameraPermission: "faceguard:camera-permission",
@@ -40,6 +41,7 @@ export type RendererTechnicalLog = {
 
 export type FaceGuardDesktopBridge = {
   isDesktop: true;
+  platform: DesktopPlatform;
   requestCameraPermission: () => Promise<boolean>;
   sessionStarted: () => void;
   protectionStateChanged: (message: ProtectionStateMessage) => void;

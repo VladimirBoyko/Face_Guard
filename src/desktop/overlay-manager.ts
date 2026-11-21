@@ -9,6 +9,7 @@ import { logTechnicalEvent } from "../core/logger.ts";
 import type { ViewingState } from "../core/protection-state.ts";
 import { decodeDecoyDataUrl, type DecoyPayload } from "./decoy-payload.ts";
 import { shouldShowOverlay } from "./overlay-policy.ts";
+import { overlayBounds, trayLocation } from "./platform.ts";
 
 const DECOY_SCHEME = "faceguard-decoy";
 
@@ -20,13 +21,14 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 function overlayDocument(imageSource: string): string {
+  const trayControl = trayLocation();
   return `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><title>FaceGuard Protection</title><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: faceguard-decoy:; style-src 'unsafe-inline'">
 <style>
 html,body{height:100%;margin:0;overflow:hidden;background:#edf0f3;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
 img{height:100%;width:100%;object-fit:cover;object-position:center top}
 .status{position:fixed;left:18px;bottom:18px;padding:9px 12px;border-radius:999px;background:rgba(20,29,25,.88);color:#fff;font-size:11px;font-weight:700;letter-spacing:.02em;box-shadow:0 8px 30px rgba(0,0,0,.22)}
-</style></head><body><img alt="Protected FaceGuard decoy" src="${imageSource}"><div class="status">FaceGuard protection active · use the menu-bar icon to end the session</div></body></html>`;
+</style></head><body><img alt="Protected FaceGuard decoy" src="${imageSource}"><div class="status">FaceGuard protection active · use the ${trayControl} icon to end the session</div></body></html>`;
 }
 
 function dataUrl(html: string): string {
@@ -124,7 +126,7 @@ export class OverlayManager {
       const existing = this.windows.get(display.id);
       if (existing && !existing.isDestroyed()) {
         const current = existing.getBounds();
-        const target = display.workArea;
+        const target = overlayBounds(display);
         if (
           current.x !== target.x ||
           current.y !== target.y ||
@@ -143,7 +145,7 @@ export class OverlayManager {
 
   private createWindow(display: Display): BrowserWindow {
     const window = new BrowserWindow({
-      ...display.workArea,
+      ...overlayBounds(display),
       show: false,
       title: "FaceGuard Protection",
       frame: false,
@@ -166,12 +168,16 @@ export class OverlayManager {
       },
     });
 
-    window.setAlwaysOnTop(true, "screen-saver");
-    window.setVisibleOnAllWorkspaces(true, {
-      visibleOnFullScreen: true,
-      skipTransformProcessType: true,
-    });
-    window.setHiddenInMissionControl(true);
+    if (process.platform === "darwin") {
+      window.setAlwaysOnTop(true, "screen-saver");
+      window.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true,
+      });
+      window.setHiddenInMissionControl(true);
+    } else {
+      window.setAlwaysOnTop(true);
+    }
     window.setContentProtection(true);
     this.loadOverlay(window);
     return window;
@@ -188,13 +194,25 @@ export class OverlayManager {
     const visible = shouldShowOverlay(this.protectedBySession, this.manualTest);
     for (const window of this.windows.values()) {
       if (window.isDestroyed()) continue;
-      if (visible && !window.isVisible()) window.showInactive();
-      else if (!visible && window.isVisible()) window.hide();
+      if (visible) {
+        // Reassert Windows z-order on every unsafe observation. This is more
+        // reliable than relying on the creation-time alwaysOnTop flag after a
+        // foreground application changes its own window state.
+        if (process.platform === "win32") window.setAlwaysOnTop(true);
+        if (!window.isVisible()) window.showInactive();
+        if (process.platform === "win32") window.moveTop();
+      } else if (window.isVisible()) {
+        window.hide();
+      }
     }
+    const visibleWindowCount = [...this.windows.values()].filter(
+      (window) => !window.isDestroyed() && window.isVisible(),
+    ).length;
     logTechnicalEvent("desktop", visible ? "protection-shown" : "protection-hidden", {
       observation: this.observation,
       protected: visible,
       displayCount: this.windows.size,
+      visibleWindowCount,
       reason,
     });
   }
