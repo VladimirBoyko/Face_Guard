@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+const path = require("node:path");
+const { MakerSquirrel } = require("@electron-forge/maker-squirrel");
 const { MakerZIP } = require("@electron-forge/maker-zip");
 const { VitePlugin } = require("@electron-forge/plugin-vite");
 
@@ -6,7 +8,9 @@ module.exports = {
   packagerConfig: {
     asar: true,
     name: "FaceGuard",
-    icon: "assets/FaceGuard.icns",
+    // Electron Packager selects FaceGuard.icns on macOS and FaceGuard.ico on
+    // Windows when the extension is omitted.
+    icon: "assets/FaceGuard",
     appBundleId: "au.edu.torrens.faceguard.prototype",
     appCategoryType: "public.app-category.utilities",
     extendInfo: {
@@ -15,7 +19,15 @@ module.exports = {
     },
   },
   rebuildConfig: {},
-  makers: [new MakerZIP({}, ["darwin"])],
+  makers: [
+    new MakerSquirrel({
+      name: "FaceGuard",
+      setupExe: "FaceGuard-Setup.exe",
+      setupIcon: path.resolve(__dirname, "assets/FaceGuard.ico"),
+      noMsi: true,
+    }),
+    new MakerZIP({}, ["darwin"]),
+  ],
   plugins: [
     new VitePlugin({
       hotRestart: true,

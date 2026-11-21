@@ -1,4 +1,4 @@
-# FaceGuard 2.0 macOS desktop proof of concept
+# FaceGuard 2.0 desktop proof of concept
 
 ## Implemented architecture
 
@@ -12,7 +12,8 @@ window lifecycle, camera permission request, and desktop overlay.
 No face image, embedding, or reusable biometric template is sent through IPC,
 written to disk, or included in technical logs. Ending a session stops all media
 tracks, zeroes descriptor arrays, releases the engine, and tells the desktop
-process to remove session protection.
+process to remove session protection. The same React enrolment and recognition
+pipeline is reused on macOS and Windows.
 
 ## Central prototype settings
 
@@ -40,13 +41,26 @@ and `0.60` detector confidence are retained only as prototype defaults.
    reports **Camera stopped. Enrolment removed.**
 
 For an overlay-only smoke test, package the app and run its executable with
-`--faceguard-test-overlay`. The menu-bar menu also provides **Test desktop
+`--faceguard-test-overlay`. The menu-bar or system-tray menu also provides **Test desktop
 protection overlay**. Neither method creates a facial descriptor.
+
+## Windows implementation
+
+- Electron uses one frameless, non-focusable, always-on-top protection window
+  for every Windows display and covers the complete display bounds.
+- The main window hides to a Windows system-tray icon; a double-click restores
+  it, and the context menu can end a session, test protection, or quit.
+- Squirrel.Windows produces `FaceGuard-Setup.exe`, Start Menu integration, and
+  normal per-user uninstall support.
+- The checked-in GitHub Actions workflow performs the Windows build on a real
+  Windows runner and publishes the installer as a workflow artifact.
+- Webcam frames and facial descriptors remain local and session-only exactly as
+  on macOS.
 
 ## Runtime evidence from this implementation pass
 
 - Apple-silicon macOS package completed successfully.
-- The packaged app opened its camera, loaded local models, accepted five photos,
+- The packaged app opened its camera, loaded local models, accepted six photos,
   entered Safe monitoring, and ended with camera off and enrolment cleared.
 - With the manual protection test active, foreground activation was exercised
   for Google Chrome, Finder, Preview, Visual Studio Code, and Microsoft Word.
@@ -58,6 +72,9 @@ protection overlay**. Neither method creates a facial descriptor.
 
 This verifies a proof of concept, not universal macOS protection.
 
+The Windows implementation is code-complete but still requires runtime testing
+on Windows hardware before it can be described as validated protection.
+
 ## Known limits and defects
 
 - Only one Apple-silicon Mac and one attached display were exercised. Per-display
@@ -67,6 +84,9 @@ This verifies a proof of concept, not universal macOS protection.
   dedicated testing.
 - FaceGuard cannot cover the login window, lock screen, FileVault prompt, secure
   input surfaces, or macOS windows placed above the screen-saver level.
+- On Windows, a normal Electron process cannot cover the UAC secure desktop,
+  lock/sign-in screens, or guarantee protection above exclusive full-screen
+  applications. Windows virtual desktops also require dedicated validation.
 - The overlay intentionally uses each display work area, leaving the menu bar and
   Dock available so the user can stop FaceGuard. Those surfaces are not concealed.
 - A crash or force-quit of the Electron main process removes protection; there is
@@ -78,6 +98,8 @@ This verifies a proof of concept, not universal macOS protection.
   require measured testing.
 - The app is unsigned and not notarised. The generated package is suitable only
   for local development testing.
+- The Windows installer is not Authenticode-signed, so SmartScreen may warn
+  users that its publisher is unknown.
 - CPU, memory, thermal, and battery use have not yet been benchmarked over long
   sessions.
 

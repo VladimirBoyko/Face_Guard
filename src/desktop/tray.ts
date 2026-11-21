@@ -1,9 +1,11 @@
-import { Menu, Tray, nativeImage } from "electron";
+import path from "node:path";
+import { app, Menu, Tray, nativeImage } from "electron";
 
 type TrayActions = {
   showControlWindow: () => void;
   endSession: () => void;
   toggleTestOverlay: () => void;
+  showDiagnosticLog: () => void;
   quit: () => void;
 };
 
@@ -19,14 +21,27 @@ export class FaceGuardTray {
   private stateLabel = "Ready";
 
   constructor(private readonly actions: TrayActions) {
-    const image = nativeImage.createFromDataURL(ICON).resize({ width: 18, height: 18 });
-    image.setTemplateImage(true);
+    const packagedIcon = path.join(
+      app.getAppPath(),
+      "assets",
+      process.platform === "win32" ? "FaceGuard.ico" : "FaceGuard.icns",
+    );
+    const fileImage = nativeImage.createFromPath(packagedIcon);
+    const iconSize = process.platform === "win32" ? 20 : 18;
+    const image = (fileImage.isEmpty()
+      ? nativeImage.createFromDataURL(ICON)
+      : fileImage
+    ).resize({ width: iconSize, height: iconSize });
+    if (process.platform === "darwin") image.setTemplateImage(true);
     this.tray = new Tray(image);
     // Keep the menu-bar control discoverable even when macOS fails to render
     // the template SVG (this can happen in development and after app updates).
     if (process.platform === "darwin") this.tray.setTitle("FG");
     this.tray.setToolTip("FaceGuard 2.0");
-    this.tray.on("click", actions.showControlWindow);
+    this.tray.on("double-click", actions.showControlWindow);
+    if (process.platform === "darwin") {
+      this.tray.on("click", actions.showControlWindow);
+    }
     this.rebuild();
   }
 
@@ -60,6 +75,10 @@ export class FaceGuardTray {
           type: "checkbox",
           checked: this.manualTest,
           click: () => this.actions.toggleTestOverlay(),
+        },
+        {
+          label: "Open diagnostic log",
+          click: () => this.actions.showDiagnosticLog(),
         },
         { type: "separator" },
         { label: "Quit FaceGuard", click: () => this.actions.quit() },
