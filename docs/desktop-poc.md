@@ -9,6 +9,11 @@ descriptor. It sends only `safe`, `extra-viewer`, `absent`, or `uncertain` plus 
 protection boolean to the main process. The main process owns the menu-bar item,
 window lifecycle, camera permission request, and desktop overlay.
 
+A single face that temporarily does not match the enrolled descriptor follows
+the normal `absent` persistence rule. Detecting multiple faces immediately
+latches extra-viewer protection. That latch remains active through subsequent
+`absent` or `uncertain` observations and is cleared only by confirmed recovery.
+
 No face image, embedding, or reusable biometric template is sent through IPC,
 written to disk, or included in technical logs. Ending a session stops all media
 tracks, zeroes descriptor arrays, releases the engine, and tells the desktop
@@ -17,19 +22,23 @@ pipeline is reused on macOS and Windows.
 
 ## Central prototype settings
 
-All tuning values live in `src/core/configuration.ts`: recognition threshold,
-detector confidence, enrolment quality, monitoring interval, absence persistence,
-additional-viewer persistence, uncertain persistence, concealment delay, safe
-recovery observations, and recovery delay. The current `0.45` match threshold
-and `0.60` detector confidence are retained only as prototype defaults.
+All tuning values live in `src/core/configuration.ts`: normal recognition
+threshold, extra-viewer recovery threshold, detector confidence, enrolment
+quality, monitoring interval, absence persistence, additional-viewer
+persistence, uncertain persistence, concealment delay, safe recovery
+observations, and recovery delay. The current `0.45` normal match threshold,
+`0.55` extra-viewer recovery threshold, and `0.60` detector confidence are retained
+only as prototype defaults. An active overlay is removed only after two
+consecutive protected-state recovery matches. The second scan is performed
+immediately, without waiting for the normal monitoring interval.
 
 ## Reproduce the states
 
 1. Run `pnpm run desktop:dev`, select **Start private session**, grant Camera
    permission, and complete the six guided photos alone in frame. The sixth
    photo uses the bottom-centre marker to represent a typing posture.
-2. **Safe:** remain alone and visible after enrolment. One safe observation is
-   sufficient to remove protection.
+2. **Safe:** remain alone and visible after enrolment. Two consecutive safe
+   observations remove active protection.
 3. **Extra-viewer:** have a second person enter the camera frame. The default is
    one observation, so protection should appear immediately.
 4. **Absent:** leave the camera frame. Protection appears after six consecutive

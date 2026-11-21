@@ -22,12 +22,16 @@ import {
 
 test("central configuration retains the prototype defaults", () => {
   assert.equal(FACEGUARD_CONFIG.recognition.matchThreshold, 0.45);
+  assert.equal(
+    FACEGUARD_CONFIG.recognition.extraViewerRecoveryThreshold,
+    0.55,
+  );
   assert.equal(FACEGUARD_CONFIG.recognition.detectorConfidence, 0.6);
   assert.equal(FACEGUARD_CONFIG.enrolment.sampleCount, 6);
   assert.equal(FACEGUARD_CONFIG.monitoring.absencePersistence, 6);
   assert.equal(FACEGUARD_CONFIG.monitoring.additionalViewerPersistence, 1);
   assert.equal(FACEGUARD_CONFIG.monitoring.uncertainPersistence, 3);
-  assert.equal(FACEGUARD_CONFIG.monitoring.recoverySafeObservations, 1);
+  assert.equal(FACEGUARD_CONFIG.monitoring.recoverySafeObservations, 2);
 });
 
 test("unsafe observation persistence is independent", () => {
@@ -36,6 +40,7 @@ test("unsafe observation persistence is independent", () => {
     observation: "safe",
     safeHits: 2,
     unsafeHits: 0,
+    extraViewerLatched: false,
   };
   state = advanceProtection(state, "absent");
   state = advanceProtection(state, "uncertain");

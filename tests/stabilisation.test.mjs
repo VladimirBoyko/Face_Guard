@@ -13,7 +13,10 @@ import { averageDescriptors } from "../src/core/descriptor.ts";
 import { evaluateEnrolmentFaces } from "../src/core/enrolment.ts";
 import {
   advanceProtection,
+  classifyObservation,
   POST_ENROLMENT_PROTECTION,
+  recognitionThresholdFor,
+  shouldConfirmRecoveryImmediately,
 } from "../src/core/protection-state.ts";
 import {
   clearSessionBiometricMemory,
@@ -73,6 +76,7 @@ test("temporary recognition loss does not conceal before persistence", () => {
   const state = applySequence(["absent", "absent", "safe"]);
   assert.equal(state.protected, false);
   assert.equal(state.observation, "safe");
+  assert.equal(state.extraViewerLatched, false);
 });
 
 test("absence waits twice as many checks and conceals on the sixth observation", () => {
@@ -88,17 +92,91 @@ test("absence waits twice as many checks and conceals on the sixth observation",
   assert.equal(after.protected, true);
 });
 
-test("additional viewer fails closed immediately and one safe check recovers", () => {
+test("additional viewer fails closed immediately and two safe checks recover", () => {
   const concealed = applySequence(["extra-viewer"]);
   assert.equal(concealed.protected, true);
-  const recovered = advanceProtection(concealed, "safe");
+  assert.equal(concealed.extraViewerLatched, true);
+  const firstSafeCheck = advanceProtection(concealed, "safe");
+  assert.equal(firstSafeCheck.protected, true);
+  const recovered = advanceProtection(firstSafeCheck, "safe");
   assert.equal(recovered.protected, false);
+  assert.equal(recovered.extraViewerLatched, false);
+});
+
+test("extra-viewer protection remains latched through absence and uncertainty", () => {
+  let state = applySequence(["extra-viewer"]);
+  state = advanceProtection(state, "absent");
+  state = advanceProtection(state, "uncertain");
+
+  assert.equal(state.protected, true);
+  assert.equal(state.extraViewerLatched, true);
+  assert.equal(
+    recognitionThresholdFor(state),
+    FACEGUARD_CONFIG.recognition.extraViewerRecoveryThreshold,
+  );
+});
+
+test("only an unauthorised viewer cannot clear an active overlay", () => {
+  let state = applySequence(["extra-viewer"]);
+  assert.equal(state.protected, true);
+
+  const remainingUnknownViewer = classifyObservation({
+    faceCount: 1,
+    bestSimilarity: 0.42,
+    embeddingsComplete: true,
+    threshold: recognitionThresholdFor(state),
+  });
+  assert.equal(remainingUnknownViewer, "absent");
+
+  state = advanceProtection(state, remainingUnknownViewer);
+  assert.equal(state.protected, true);
+  assert.equal(state.extraViewerLatched, true);
+
+  const authorisedUserAlone = classifyObservation({
+    faceCount: 1,
+    bestSimilarity: 0.62,
+    embeddingsComplete: true,
+    threshold: recognitionThresholdFor(state),
+  });
+  assert.equal(authorisedUserAlone, "safe");
+  state = advanceProtection(state, authorisedUserAlone);
+  assert.equal(state.protected, true);
+  state = advanceProtection(state, authorisedUserAlone);
+  assert.equal(state.protected, false);
+});
+
+test("an isolated false authorised match cannot flicker the overlay off", () => {
+  let state = applySequence(["extra-viewer"]);
+
+  state = advanceProtection(state, "safe");
+  assert.equal(state.protected, true);
+  assert.equal(state.safeHits, 1);
+
+  state = advanceProtection(state, "absent");
+  assert.equal(state.protected, true);
+  assert.equal(state.safeHits, 0);
+
+  state = advanceProtection(state, "safe");
+  assert.equal(state.protected, true);
+  assert.equal(shouldConfirmRecoveryImmediately(state), true);
+});
+
+test("recovery confirmation runs immediately only between consecutive safe checks", () => {
+  let state = applySequence(["extra-viewer"]);
+  assert.equal(shouldConfirmRecoveryImmediately(state), false);
+
+  state = advanceProtection(state, "safe");
+  assert.equal(shouldConfirmRecoveryImmediately(state), true);
+
+  state = advanceProtection(state, "safe");
+  assert.equal(state.protected, false);
+  assert.equal(shouldConfirmRecoveryImmediately(state), false);
 });
 
 test("uncertain observations conceal and a returning user recovers", () => {
   const concealed = applySequence(["uncertain", "uncertain", "uncertain"]);
   assert.equal(concealed.protected, true);
-  const recovered = applySequence(["safe"], concealed);
+  const recovered = applySequence(["safe", "safe"], concealed);
   assert.equal(recovered.protected, false);
 });
 
@@ -167,11 +245,13 @@ test("configuration validation rejects unsafe ranges and accepts defaults", () =
   assert.deepEqual(validateFaceGuardConfiguration(FACEGUARD_CONFIG), []);
   const invalid = structuredClone(FACEGUARD_CONFIG);
   invalid.recognition.matchThreshold = 1.2;
+  invalid.recognition.extraViewerRecoveryThreshold = 0.2;
   invalid.monitoring.absencePersistence = 0;
   invalid.monitoring.recoveryDelayMs = -1;
   invalid.enrolment.sampleCount = 4;
   assert.deepEqual(validateFaceGuardConfiguration(invalid), [
     "recognition.matchThreshold must be between 0 and 1",
+    "recognition.extraViewerRecoveryThreshold must be at least recognition.matchThreshold",
     "monitoring.absencePersistence must be a positive integer",
     "monitoring.recoveryDelayMs must be zero or greater",
     "enrolment directions must match enrolment.sampleCount",
@@ -206,7 +286,7 @@ test("transition timing remains derived from central configuration", () => {
   );
   assert.equal(
     observedSpan(FACEGUARD_CONFIG.monitoring.recoverySafeObservations),
-    0,
+    650,
   );
   // Add at most one interval for an event occurring just after a check.
   assert.equal(

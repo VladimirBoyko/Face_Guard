@@ -21,6 +21,35 @@ export interface ProtectionState {
   observation: ViewingState;
   safeHits: number;
   unsafeHits: number;
+  extraViewerLatched: boolean;
+}
+
+/**
+ * Protection recovery deliberately requires stronger biometric evidence than
+ * ordinary monitoring. This prevents the one remaining unauthorised viewer
+ * from clearing an overlay after the authorised user leaves the camera view.
+ */
+export function recognitionThresholdFor(
+  state: Pick<ProtectionState, "extraViewerLatched">,
+  config: FaceGuardConfiguration = FACEGUARD_CONFIG,
+): number {
+  return state.extraViewerLatched
+    ? config.recognition.extraViewerRecoveryThreshold
+    : config.recognition.matchThreshold;
+}
+
+/** Run recovery confirmation scans back-to-back instead of waiting for the
+ * normal monitoring interval. Any unsafe result still resets safeHits. */
+export function shouldConfirmRecoveryImmediately(
+  state: ProtectionState,
+  config: FaceGuardConfiguration = FACEGUARD_CONFIG,
+): boolean {
+  return (
+    state.protected &&
+    state.observation === "safe" &&
+    state.safeHits > 0 &&
+    state.safeHits < config.monitoring.recoverySafeObservations
+  );
 }
 
 export const POST_ENROLMENT_PROTECTION: ProtectionState = {
@@ -28,6 +57,7 @@ export const POST_ENROLMENT_PROTECTION: ProtectionState = {
   observation: "safe",
   safeHits: RECOVERY_SAFE_HITS,
   unsafeHits: 0,
+  extraViewerLatched: false,
 };
 
 export function classifyObservation(
@@ -76,11 +106,15 @@ export function advanceProtection(
     next.unsafeHits = 0;
     if (next.safeHits >= config.monitoring.recoverySafeObservations) {
       next.protected = false;
+      next.extraViewerLatched = false;
     }
     return next;
   }
 
   next.safeHits = 0;
+  if (observation === "extra-viewer") {
+    next.extraViewerLatched = true;
+  }
   next.unsafeHits =
     previous.observation === observation ? previous.unsafeHits + 1 : 1;
   if (next.unsafeHits >= persistenceFor(observation, config)) {

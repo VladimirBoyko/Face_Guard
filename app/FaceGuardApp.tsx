@@ -11,6 +11,8 @@ import {
   advanceProtection,
   classifyObservation,
   POST_ENROLMENT_PROTECTION,
+  recognitionThresholdFor,
+  shouldConfirmRecoveryImmediately,
   type ProtectionState,
   type ViewingState,
 } from "./state";
@@ -69,6 +71,7 @@ const INITIAL_PROTECTION: ProtectionState = {
   observation: "uncertain",
   safeHits: 0,
   unsafeHits: 0,
+  extraViewerLatched: false,
 };
 
 const STATE_COPY: Record<
@@ -396,52 +399,62 @@ export function FaceGuardApp() {
     }
 
     detectionRunningRef.current = true;
-    const startedAt = performance.now();
     try {
-      const result = await engineRef.current.detect(videoRef.current);
-      const embeddingsComplete = result.face.every(
-        (face) => face.embedding && face.embedding.length > 0,
-      );
-      const similarities = result.face
-        .filter((face) => face.embedding)
-        .map((face) =>
-          engineRef.current!.match.similarity(
-            descriptorRef.current!,
-            face.embedding!,
-          ),
+      let confirmRecoveryImmediately = false;
+      do {
+        const startedAt = performance.now();
+        const result = await engineRef.current.detect(videoRef.current);
+        const embeddingsComplete = result.face.every(
+          (face) => face.embedding && face.embedding.length > 0,
         );
-      const bestSimilarity = similarities.length ? Math.max(...similarities) : 0;
-      const observation = classifyObservation({
-        faceCount: result.face.length,
-        bestSimilarity,
-        embeddingsComplete,
-      });
-      const previous = protectionRef.current;
-      if (observation !== previous.observation) {
-        observationStartedAtRef.current = startedAt;
-      }
-      const next = advanceProtection(previous, observation);
-      if (
-        next.observation !== previous.observation ||
-        next.protected !== previous.protected
-      ) {
-        const details = {
-          observation: next.observation,
-          protected: next.protected,
-          latencyMs: Math.round(performance.now() - startedAt),
-          similarity: Math.round(bestSimilarity * 1_000) / 1_000,
-          transitionMs:
-            next.protected !== previous.protected &&
-            observationStartedAtRef.current !== null
-              ? Math.round(performance.now() - observationStartedAtRef.current)
-              : undefined,
-        };
-        logTechnicalEvent("renderer", "state-transition", details);
-        desktopBridge?.technicalLog({ event: "state-transition", ...details });
-      }
-      protectionRef.current = next;
-      setProtection(next);
-      setLastCheckMs(Math.round(performance.now() - startedAt));
+        const similarities = result.face
+          .filter((face) => face.embedding)
+          .map((face) =>
+            engineRef.current!.match.similarity(
+              descriptorRef.current!,
+              face.embedding!,
+            ),
+          );
+        const bestSimilarity = similarities.length
+          ? Math.max(...similarities)
+          : 0;
+        const previous = protectionRef.current;
+        const observation = classifyObservation({
+          faceCount: result.face.length,
+          bestSimilarity,
+          embeddingsComplete,
+          threshold: recognitionThresholdFor(previous),
+        });
+        if (observation !== previous.observation) {
+          observationStartedAtRef.current = startedAt;
+        }
+        const next = advanceProtection(previous, observation);
+        if (
+          next.observation !== previous.observation ||
+          next.protected !== previous.protected
+        ) {
+          const details = {
+            observation: next.observation,
+            protected: next.protected,
+            latencyMs: Math.round(performance.now() - startedAt),
+            similarity: Math.round(bestSimilarity * 1_000) / 1_000,
+            transitionMs:
+              next.protected !== previous.protected &&
+              observationStartedAtRef.current !== null
+                ? Math.round(performance.now() - observationStartedAtRef.current)
+                : undefined,
+          };
+          logTechnicalEvent("renderer", "state-transition", details);
+          desktopBridge?.technicalLog({ event: "state-transition", ...details });
+        }
+        protectionRef.current = next;
+        setProtection(next);
+        setLastCheckMs(Math.round(performance.now() - startedAt));
+        confirmRecoveryImmediately = shouldConfirmRecoveryImmediately(next);
+      } while (
+        confirmRecoveryImmediately &&
+        phaseRef.current === "monitoring"
+      );
     } catch {
       const next = advanceProtection(protectionRef.current, "uncertain");
       protectionRef.current = next;
