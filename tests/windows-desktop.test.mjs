@@ -38,6 +38,18 @@ test("Windows packaging includes Squirrel installer and a native icon", async ()
   await access(new URL("../assets/FaceGuard.ico", import.meta.url));
 });
 
+test("Windows tray uses a visible high-contrast FG icon", async () => {
+  const tray = await readFile(
+    new URL("../src/desktop/tray.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(tray, /const WINDOWS_TRAY_ICON/);
+  assert.match(tray, /fill="#002147"/);
+  assert.match(tray, /fill="#ffffff"/);
+  assert.match(tray, /process\.platform === "win32"[\s\S]*WINDOWS_TRAY_ICON/);
+});
+
 test("Windows workflow uses Node.js 24-compatible action runtimes", async () => {
   const workflow = await readFile(
     new URL("../.github/workflows/windows-build.yml", import.meta.url),
