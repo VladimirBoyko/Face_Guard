@@ -22,5 +22,5 @@ test("macOS workflow builds and uploads the ARM64 PKG", async () => {
   assert.match(buildScript, /electron-forge package --platform=darwin/);
   assert.match(buildScript, /pkgbuild/);
   assert.match(buildScript, /--install-location \/Applications/);
-  assert.match(packageJson, /"version": "0\.1\.1"/);
+  assert.match(packageJson, /"version": "0\.1\.2"/);
 });

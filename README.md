@@ -116,7 +116,7 @@ To create the macOS ARM64 installer package:
 pnpm run desktop:package:mac
 ```
 
-The installer is produced at `out/FaceGuard-0.1.1-arm64.pkg`. You can also run
+The installer is produced at `out/FaceGuard-0.1.2-arm64.pkg`. You can also run
 the **Build macOS PKG** GitHub Actions workflow and download its
 `FaceGuard-macOS-arm64-PKG` artifact. The proof-of-concept package remains
 unsigned and unnotarised.
