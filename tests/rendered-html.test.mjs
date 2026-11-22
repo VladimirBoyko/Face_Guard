@@ -120,7 +120,8 @@ test("uses five guided enrolment photos and a selectable local decoy", async () 
   assert.match(source, /className="gaze-trigger"/);
   assert.match(source, /onClick=\{captureSample\}/);
   assert.match(source, /do not follow it only with your eyes/);
-  assert.match(source, /Turn your head towards this red spot/);
+  assert.match(source, /Turn your head toward the red spot and click/);
+  assert.doesNotMatch(source, /className="gaze-arrow"/);
   assert.match(configuration, /position: "centre"/);
   assert.match(configuration, /position: "upper-left"/);
   assert.match(configuration, /position: "lower-left"/);

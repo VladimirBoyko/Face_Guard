@@ -868,9 +868,7 @@ export function FaceGuardApp() {
             <span className="gaze-dot" aria-hidden="true" />
           </button>
           <div className="gaze-message">
-            <strong>
-              Turn your head towards this red spot, then click it to take the photo
-            </strong>
+            <strong>Turn your head toward the red spot and click</strong>
             <small>
               Photo {sampleCount + 1} · {currentPhotoDirection.label}
             </small>

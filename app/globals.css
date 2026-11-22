@@ -448,12 +448,14 @@ button {
 .gaze-trigger { align-items: center; background: transparent; border: 0; display: flex; height: 60px; justify-content: center; padding: 0; pointer-events: auto; width: 60px; }
 .gaze-trigger:focus-visible { border-radius: 50%; outline: 4px solid rgba(239, 46, 28, 0.42); outline-offset: 3px; }
 .gaze-dot { animation: gaze-pulse 1.1s ease-out infinite; background: #ef2e1c; border: 5px solid rgba(255, 255, 255, 0.96); border-radius: 50%; box-shadow: 0 0 0 8px rgba(239, 46, 28, 0.46); display: block; height: 40px; width: 40px; }
-.gaze-message { background: #e52c1c; border: 2px solid rgba(255, 255, 255, 0.92); border-radius: 8px; box-shadow: 0 10px 26px rgba(71, 14, 8, 0.3); left: 30px; padding: 10px 12px; pointer-events: none; position: absolute; top: 58px; transform: translateX(-50%); width: 218px; }
-.gaze-message strong { display: block; font-size: 11px; line-height: 1.35; }
-.gaze-message small { display: block; font-size: 9px; font-weight: 760; letter-spacing: 0.04em; margin-top: 5px; opacity: 0.82; text-transform: uppercase; }
-.gaze-target.lower-left .gaze-message, .gaze-target.lower-right .gaze-message { bottom: 58px; top: auto; }
-.gaze-target.upper-left .gaze-message, .gaze-target.lower-left .gaze-message { left: 58px; transform: none; }
-.gaze-target.upper-right .gaze-message, .gaze-target.lower-right .gaze-message { left: auto; right: 58px; transform: none; }
+.gaze-message { background: #e52c1c; border: 2px solid rgba(255, 255, 255, 0.92); border-radius: 8px; box-shadow: 0 10px 26px rgba(71, 14, 8, 0.3); padding: 14px 16px; pointer-events: none; position: absolute; width: 270px; }
+.gaze-message strong { display: block; font-size: 17px; line-height: 1.25; }
+.gaze-message small { display: block; font-size: 11px; font-weight: 760; letter-spacing: 0.04em; margin-top: 8px; opacity: 0.82; text-transform: uppercase; }
+.gaze-target.centre .gaze-message { left: 30px; top: 78px; transform: translateX(-50%); }
+.gaze-target.upper-left .gaze-message { left: 72px; top: 72px; }
+.gaze-target.lower-left .gaze-message { bottom: 72px; left: 72px; }
+.gaze-target.upper-right .gaze-message { right: 72px; top: 72px; }
+.gaze-target.lower-right .gaze-message { bottom: 72px; right: 72px; }
 @keyframes gaze-pulse {
   0% { box-shadow: 0 0 0 0 rgba(239, 46, 28, 0.72); transform: scale(1); }
   45% { transform: scale(1.14); }
@@ -540,7 +542,8 @@ footer span { color: #7caeda; }
   .gaze-target.upper-right, .gaze-target.lower-right { right: 10px; }
   .gaze-target.upper-left, .gaze-target.upper-right { top: 10px; }
   .gaze-target.lower-left, .gaze-target.lower-right { bottom: 10px; }
-  .gaze-message { width: 190px; }
+  .gaze-message { width: 230px; }
+  .gaze-message strong { font-size: 15px; }
   .how-it-works { gap: 45px; padding: 64px 24px; }
   .how-it-works ol { grid-template-columns: 1fr; }
   footer { align-items: flex-start; flex-direction: column; gap: 9px; padding: 22px 24px; }
