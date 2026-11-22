@@ -208,6 +208,49 @@ test("only an unauthorised viewer cannot clear an active overlay", () => {
   assert.equal(state.protected, false);
 });
 
+test("a stranger appearing after absence cannot clear the overlay", () => {
+  let state = applySequence([
+    "absent",
+    "absent",
+    "absent",
+    "absent",
+    "absent",
+    "absent",
+  ]);
+  assert.equal(state.protected, true);
+  assert.equal(state.extraViewerLatched, false);
+  assert.equal(
+    recognitionThresholdFor(state),
+    FACEGUARD_CONFIG.recognition.extraViewerRecoveryThreshold,
+  );
+
+  // This score would pass ordinary monitoring at 0.45, but must not recover
+  // an already protected session.
+  const stranger = classifyObservation({
+    faceCount: 1,
+    bestSimilarity: 0.5,
+    embeddingsComplete: true,
+    threshold: recognitionThresholdFor(state),
+  });
+  assert.equal(stranger, "absent");
+
+  state = advanceProtection(state, stranger);
+  state = advanceProtection(state, stranger);
+  assert.equal(state.protected, true);
+
+  const authorisedUserAlone = classifyObservation({
+    faceCount: 1,
+    bestSimilarity: 0.62,
+    embeddingsComplete: true,
+    threshold: recognitionThresholdFor(state),
+  });
+  assert.equal(authorisedUserAlone, "safe");
+  state = advanceProtection(state, authorisedUserAlone);
+  assert.equal(state.protected, true);
+  state = advanceProtection(state, authorisedUserAlone);
+  assert.equal(state.protected, false);
+});
+
 test("an isolated false authorised match cannot flicker the overlay off", () => {
   let state = applySequence(["extra-viewer"]);
 

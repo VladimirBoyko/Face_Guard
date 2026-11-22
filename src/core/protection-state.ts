@@ -27,14 +27,16 @@ export interface ProtectionState {
 
 /**
  * Protection recovery deliberately requires stronger biometric evidence than
- * ordinary monitoring. This prevents the one remaining unauthorised viewer
- * from clearing an overlay after the authorised user leaves the camera view.
+ * ordinary monitoring. Every active overlay uses the stricter threshold,
+ * including overlays caused by absence. This prevents a newly appearing
+ * unauthorised viewer from clearing protection after the authorised user has
+ * already left the camera view.
  */
 export function recognitionThresholdFor(
-  state: Pick<ProtectionState, "extraViewerLatched">,
+  state: Pick<ProtectionState, "protected" | "extraViewerLatched">,
   config: FaceGuardConfiguration = FACEGUARD_CONFIG,
 ): number {
-  return state.extraViewerLatched
+  return state.protected || state.extraViewerLatched
     ? config.recognition.extraViewerRecoveryThreshold
     : config.recognition.matchThreshold;
 }
