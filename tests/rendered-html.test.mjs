@@ -104,7 +104,7 @@ test("viewing-state rules fail closed and recover on configured safe evidence", 
   assert.equal(state.protected, true);
 });
 
-test("uses six guided enrolment photos and a selectable local decoy", async () => {
+test("uses five guided enrolment photos and a selectable local decoy", async () => {
   const source = await readFile(
     new URL("../app/FaceGuardApp.tsx", import.meta.url),
     "utf8",
@@ -120,14 +120,14 @@ test("uses six guided enrolment photos and a selectable local decoy", async () =
   assert.match(source, /className="gaze-trigger"/);
   assert.match(source, /onClick=\{captureSample\}/);
   assert.match(source, /do not follow it only with your eyes/);
-  assert.match(source, /Turn your head towards your keyboard for the best result/);
+  assert.match(source, /Turn your head towards this red spot/);
   assert.match(configuration, /position: "centre"/);
   assert.match(configuration, /position: "upper-left"/);
   assert.match(configuration, /position: "lower-left"/);
   assert.match(configuration, /position: "upper-right"/);
   assert.match(configuration, /position: "lower-right"/);
-  assert.match(configuration, /position: "lower-centre"/);
-  assert.match(configuration, /sampleCount: 6/);
+  assert.doesNotMatch(configuration, /position: "lower-centre"/);
+  assert.match(configuration, /sampleCount: 5/);
 });
 
 test("desktop quit is explicit and prevents duplicate background instances", async () => {

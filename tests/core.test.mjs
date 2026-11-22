@@ -27,7 +27,7 @@ test("central configuration retains the prototype defaults", () => {
     0.55,
   );
   assert.equal(FACEGUARD_CONFIG.recognition.detectorConfidence, 0.6);
-  assert.equal(FACEGUARD_CONFIG.enrolment.sampleCount, 6);
+  assert.equal(FACEGUARD_CONFIG.enrolment.sampleCount, 5);
   assert.equal(FACEGUARD_CONFIG.monitoring.absencePersistence, 6);
   assert.equal(FACEGUARD_CONFIG.monitoring.additionalViewerPersistence, 1);
   assert.equal(FACEGUARD_CONFIG.monitoring.uncertainPersistence, 3);

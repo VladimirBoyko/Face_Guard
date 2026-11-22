@@ -21,11 +21,12 @@ import {
   cameraFailureMessage,
   classifyCameraStartFailure,
 } from "../src/core/camera";
-import {
-  averageDescriptors,
-  clearDescriptorSamples,
-} from "../src/core/descriptor";
+import { averageBestTemplateSimilarities } from "../src/core/descriptor";
 import { evaluateEnrolmentFaces } from "../src/core/enrolment";
+import {
+  evaluateFrameQuality,
+  hasMinimumFaceSize,
+} from "../src/core/frame-quality";
 import {
   isAllowedDecoyType,
   isSafeDecoyDataUrl,
@@ -47,6 +48,7 @@ type Phase =
 
 type FaceResult = {
   boxScore: number;
+  box?: number[];
   embedding?: number[];
 };
 
@@ -65,6 +67,54 @@ type HumanEngine = {
 const ENROLMENT_SAMPLES = FACEGUARD_CONFIG.enrolment.sampleCount;
 const MONITOR_INTERVAL_MS = FACEGUARD_CONFIG.monitoring.intervalMs;
 const PHOTO_DIRECTIONS = FACEGUARD_CONFIG.enrolment.directions;
+
+function readVideoFrameQuality(
+  video: HTMLVideoElement,
+  canvasRef: { current: HTMLCanvasElement | null },
+  faceBox?: readonly number[],
+) {
+  const { sampleWidth, sampleHeight } = FACEGUARD_CONFIG.quality;
+  const canvas = canvasRef.current ?? document.createElement("canvas");
+  canvasRef.current = canvas;
+  canvas.width = sampleWidth;
+  canvas.height = sampleHeight;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+    return {
+      acceptable: false as const,
+      brightness: 0,
+      contrast: 0,
+      edgeStrength: 0,
+      reason: "blurred" as const,
+    };
+  }
+  if (faceBox && faceBox.length >= 4) {
+    const sourceX = Math.max(0, faceBox[0]);
+    const sourceY = Math.max(0, faceBox[1]);
+    const sourceWidth = Math.min(faceBox[2], video.videoWidth - sourceX);
+    const sourceHeight = Math.min(faceBox[3], video.videoHeight - sourceY);
+    context.drawImage(
+      video,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      sampleWidth,
+      sampleHeight,
+    );
+  } else {
+    context.drawImage(video, 0, 0, sampleWidth, sampleHeight);
+  }
+  const pixels = context.getImageData(0, 0, sampleWidth, sampleHeight).data;
+  return evaluateFrameQuality(
+    pixels,
+    sampleWidth,
+    sampleHeight,
+    FACEGUARD_CONFIG.quality,
+  );
+}
 
 const INITIAL_PROTECTION: ProtectionState = {
   protected: true,
@@ -120,8 +170,8 @@ export function FaceGuardApp() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const engineRef = useRef<HumanEngine | null>(null);
-  const descriptorRef = useRef<number[] | null>(null);
   const samplesRef = useRef<number[][]>([]);
+  const qualityCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const detectionRunningRef = useRef(false);
   const protectionRef = useRef<ProtectionState>(INITIAL_PROTECTION);
@@ -153,10 +203,9 @@ export function FaceGuardApp() {
 
   const clearBiometricMemory = useCallback(() => {
     const cleared = clearSessionBiometricMemory({
-      descriptor: descriptorRef.current,
+      descriptor: null,
       samples: samplesRef.current,
     });
-    descriptorRef.current = cleared.descriptor;
     samplesRef.current = cleared.samples;
     logTechnicalEvent("renderer", "biometric-memory-cleared");
   }, []);
@@ -393,7 +442,7 @@ export function FaceGuardApp() {
       phaseRef.current !== "monitoring" ||
       !videoRef.current ||
       !engineRef.current ||
-      !descriptorRef.current
+      samplesRef.current.length < ENROLMENT_SAMPLES
     ) {
       return;
     }
@@ -410,19 +459,35 @@ export function FaceGuardApp() {
         const similarities = result.face
           .filter((face) => face.embedding)
           .map((face) =>
-            engineRef.current!.match.similarity(
-              descriptorRef.current!,
+            averageBestTemplateSimilarities(
+              samplesRef.current,
               face.embedding!,
+              (template, candidate) =>
+                engineRef.current!.match.similarity(template, candidate),
+              FACEGUARD_CONFIG.recognition.bestTemplateMatches,
             ),
           );
         const bestSimilarity = similarities.length
           ? Math.max(...similarities)
           : 0;
         const previous = protectionRef.current;
+        const frameQuality = readVideoFrameQuality(
+          videoRef.current,
+          qualityCanvasRef,
+          result.face[0]?.box,
+        );
+        const qualitySufficient =
+          result.face.length !== 1 ||
+          (frameQuality.acceptable &&
+            hasMinimumFaceSize(
+              result.face[0].box,
+              FACEGUARD_CONFIG.quality.monitoringMinimumFaceSizePx,
+            ));
         const observation = classifyObservation({
           faceCount: result.face.length,
           bestSimilarity,
           embeddingsComplete,
+          qualitySufficient,
           threshold: recognitionThresholdFor(previous),
         });
         if (observation !== previous.observation) {
@@ -493,6 +558,7 @@ export function FaceGuardApp() {
       const decision = evaluateEnrolmentFaces(
         result.face,
         FACEGUARD_CONFIG.recognition.enrolmentBoxScore,
+        FACEGUARD_CONFIG.enrolment.minimumFaceSizePx,
       );
       if (!decision.accepted) {
         setMessage(
@@ -500,7 +566,40 @@ export function FaceGuardApp() {
             ? "No clear face detected. Face the camera in even lighting and try again."
             : decision.reason === "multiple-faces"
               ? "More than one face detected. Enrolment requires the authorised user to be alone."
+              : decision.reason === "face-too-small"
+                ? "Your face is too small in the frame. Move closer to the camera and try again."
               : "The photo was not clear enough. Move slightly closer and try again.",
+        );
+        return;
+      }
+
+      const frameQuality = readVideoFrameQuality(
+        videoRef.current,
+        qualityCanvasRef,
+        result.face[0]?.box,
+      );
+      if (!frameQuality.acceptable) {
+        setMessage(
+          frameQuality.reason === "blurred"
+            ? "This photo looks blurred. Hold still, turn your head to the marker, and try again."
+            : "The lighting is not clear enough. Use even front lighting and try again.",
+        );
+        return;
+      }
+
+      const duplicateSimilarity = samplesRef.current.length
+        ? Math.max(
+            ...samplesRef.current.map((sample) =>
+              engineRef.current!.match.similarity(sample, decision.embedding),
+            ),
+          )
+        : 0;
+      if (
+        duplicateSimilarity >=
+        FACEGUARD_CONFIG.enrolment.maximumDuplicateSimilarity
+      ) {
+        setMessage(
+          "This angle is too similar to an earlier photo. Turn your head—not only your eyes—towards the red marker and try again.",
         );
         return;
       }
@@ -510,8 +609,6 @@ export function FaceGuardApp() {
       setSampleCount(count);
 
       if (count >= ENROLMENT_SAMPLES) {
-        descriptorRef.current = averageDescriptors(samplesRef.current);
-        samplesRef.current = clearDescriptorSamples(samplesRef.current);
         setMessage("");
         beginMonitoring();
       } else {
@@ -628,8 +725,8 @@ export function FaceGuardApp() {
               <h2>Confirm the authorised user</h2>
               <p>
                 Be alone in frame and turn your head towards each red marker —
-                do not follow it only with your eyes. Six different views,
-                including a typing position, become one temporary descriptor.
+                do not follow it only with your eyes. Five different views
+                remain as temporary session descriptors.
               </p>
               <div className="sample-progress" aria-hidden="true">
                 {Array.from({ length: ENROLMENT_SAMPLES }, (_, index) => (
@@ -683,7 +780,7 @@ export function FaceGuardApp() {
               <p className="eyebrow">Session cleared</p>
               <h2>Camera stopped. Enrolment removed.</h2>
               <p>
-                The in-memory face descriptor has been discarded. Start again
+                The in-memory face descriptors have been discarded. Start again
                 whenever you need a new private session.
               </p>
               <button className="primary-button" onClick={restart}>
@@ -742,9 +839,9 @@ export function FaceGuardApp() {
         </div>
         <ol>
           <li><span>01</span><strong>Consent</strong><p>You intentionally grant camera access for each session.</p></li>
-          <li><span>02</span><strong>Enrol</strong><p>Six guided photos form a temporary descriptor in page memory.</p></li>
+          <li><span>02</span><strong>Enrol</strong><p>Five guided photos remain as temporary session descriptors in memory.</p></li>
           <li><span>03</span><strong>Protect</strong><p>Unsafe or uncertain viewing conditions conceal the workspace.</p></li>
-          <li><span>04</span><strong>Clear</strong><p>Ending the session stops the camera and removes the descriptor.</p></li>
+          <li><span>04</span><strong>Clear</strong><p>Ending the session stops the camera and removes all descriptors.</p></li>
         </ol>
       </section>
 
@@ -772,9 +869,7 @@ export function FaceGuardApp() {
           </button>
           <div className="gaze-message">
             <strong>
-              {currentPhotoDirection.position === "lower-centre"
-                ? "Turn your head towards your keyboard for the best result, then click the red spot"
-                : "Turn your head towards this red spot, then click it to take the photo"}
+              Turn your head towards this red spot, then click it to take the photo
             </strong>
             <small>
               Photo {sampleCount + 1} · {currentPhotoDirection.label}
