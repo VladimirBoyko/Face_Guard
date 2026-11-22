@@ -121,9 +121,11 @@ test("uses five guided enrolment photos and a selectable local decoy", async () 
   assert.match(source, /onClick=\{captureSample\}/);
   assert.match(source, /do not follow it only with your eyes/);
   assert.match(source, /Turn your head toward the red spot and click/);
-  assert.match(source, /className=\{`gaze-message\$\{message \? " gaze-feedback"/);
-  assert.match(source, /role=\{message \? "alert" : undefined\}/);
+  assert.match(source, /className=\{`gaze-message\$\{enrolmentError \? " gaze-feedback"/);
+  assert.match(source, /role=\{enrolmentError \? "alert" : undefined\}/);
   assert.match(source, /message && phase !== "enrolling"/);
+  assert.doesNotMatch(source, /Checking this photo/);
+  assert.doesNotMatch(source, /Photo \$\{count\} accepted/);
   assert.doesNotMatch(source, /className="gaze-arrow"/);
   assert.match(configuration, /position: "centre"/);
   assert.match(configuration, /position: "upper-left"/);

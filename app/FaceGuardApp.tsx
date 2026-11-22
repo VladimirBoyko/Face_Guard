@@ -157,6 +157,7 @@ export function FaceGuardApp() {
   const desktopPlatform = desktopBridge?.platform;
   const [phase, setPhase] = useState<Phase>("intro");
   const [message, setMessage] = useState("");
+  const [enrolmentError, setEnrolmentError] = useState("");
   const [sampleCount, setSampleCount] = useState(0);
   const [protection, setProtection] =
     useState<ProtectionState>(INITIAL_PROTECTION);
@@ -240,6 +241,7 @@ export function FaceGuardApp() {
     setSampleCount(0);
     setLastCheckMs(null);
     setMessage("");
+    setEnrolmentError("");
     updatePhase("ended");
     desktopBridge?.sessionEnded();
     if (!isDesktop && document.fullscreenElement) {
@@ -427,6 +429,7 @@ export function FaceGuardApp() {
 
   const startSession = useCallback(async () => {
     setMessage("");
+    setEnrolmentError("");
     updatePhase("starting");
     void enterFullscreen();
     if (desktopBridge && !(await desktopBridge.requestCameraPermission())) {
@@ -655,7 +658,7 @@ export function FaceGuardApp() {
     }
 
     detectionRunningRef.current = true;
-    setMessage("Checking this photo…");
+    setEnrolmentError("");
     try {
       const result = await engineRef.current.detect(videoRef.current);
       const decision = evaluateEnrolmentFaces(
@@ -664,7 +667,7 @@ export function FaceGuardApp() {
         FACEGUARD_CONFIG.enrolment.minimumFaceSizePx,
       );
       if (!decision.accepted) {
-        setMessage(
+        setEnrolmentError(
           decision.reason === "no-face"
             ? "No clear face detected. Face the camera in even lighting and try again."
             : decision.reason === "multiple-faces"
@@ -682,7 +685,7 @@ export function FaceGuardApp() {
         result.face[0]?.box,
       );
       if (!frameQuality.acceptable) {
-        setMessage(
+        setEnrolmentError(
           frameQuality.reason === "blurred"
             ? "This photo looks blurred. Hold still, turn your head to the marker, and try again."
             : "The lighting is not clear enough. Use even front lighting and try again.",
@@ -701,13 +704,14 @@ export function FaceGuardApp() {
         duplicateSimilarity >=
         FACEGUARD_CONFIG.enrolment.maximumDuplicateSimilarity
       ) {
-        setMessage(
+        setEnrolmentError(
           "This angle is too similar to an earlier photo. Turn your head—not only your eyes—towards the red marker and try again.",
         );
         return;
       }
 
       samplesRef.current.push(decision.embedding);
+      setEnrolmentError("");
       const count = samplesRef.current.length;
       setSampleCount(count);
 
@@ -715,12 +719,12 @@ export function FaceGuardApp() {
         setMessage("");
         beginMonitoring();
       } else {
-        setMessage(
-          `Photo ${count} accepted. Turn your head towards the next red marker.`,
-        );
+        setMessage("");
       }
     } catch {
-      setMessage("The local face check failed. Keep the camera clear and try again.");
+      setEnrolmentError(
+        "The local face check failed. Keep the camera clear and try again.",
+      );
     } finally {
       detectionRunningRef.current = false;
     }
@@ -729,6 +733,7 @@ export function FaceGuardApp() {
   const restart = useCallback(() => {
     updatePhase("intro");
     setMessage("");
+    setEnrolmentError("");
   }, [updatePhase]);
 
   const stateCopy = STATE_COPY[protection.observation];
@@ -973,14 +978,14 @@ export function FaceGuardApp() {
             <span className="gaze-dot" aria-hidden="true" />
           </button>
           <div
-            className={`gaze-message${message ? " gaze-feedback" : ""}`}
-            role={message ? "alert" : undefined}
+            className={`gaze-message${enrolmentError ? " gaze-feedback" : ""}`}
+            role={enrolmentError ? "alert" : undefined}
           >
             <strong>
-              {message || "Turn your head toward the red spot and click"}
+              {enrolmentError || "Turn your head toward the red spot and click"}
             </strong>
             <small>
-              {message ? "Please check · " : ""}
+              {enrolmentError ? "Please check · " : ""}
               Photo {sampleCount + 1} · {currentPhotoDirection.label}
             </small>
           </div>
