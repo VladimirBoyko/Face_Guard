@@ -4,6 +4,7 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  powerMonitor,
   session,
   systemPreferences,
 } from "electron";
@@ -60,6 +61,31 @@ function updateTray(): void {
     stateLabel(),
     overlayManager?.isManualTestActive() ?? false,
   );
+}
+
+function protectForSystemInterruption(reason: "suspend" | "lock-screen"): void {
+  if (!sessionActive) return;
+  currentObservation = "uncertain";
+  overlayManager?.setProtection(true, "uncertain");
+  updateTray();
+  logTechnicalEvent("desktop", "system-interruption-fail-closed", {
+    observation: "uncertain",
+    protected: true,
+    reason,
+  });
+}
+
+function recoverAfterSystemResume(reason: "resume" | "unlock-screen"): void {
+  if (!sessionActive) return;
+  currentObservation = "uncertain";
+  overlayManager?.setProtection(true, "uncertain");
+  updateTray();
+  controlWindow?.webContents.send(IPC.systemResume);
+  logTechnicalEvent("desktop", "camera-recovery-requested", {
+    observation: "uncertain",
+    protected: true,
+    reason,
+  });
 }
 
 function showControlWindow(): void {
@@ -286,6 +312,14 @@ app.whenReady().then(() => {
   controlWindow = createControlWindow();
   configurePermissions();
   registerIpc();
+  powerMonitor.on("suspend", () => protectForSystemInterruption("suspend"));
+  powerMonitor.on("lock-screen", () =>
+    protectForSystemInterruption("lock-screen"),
+  );
+  powerMonitor.on("resume", () => recoverAfterSystemResume("resume"));
+  powerMonitor.on("unlock-screen", () =>
+    recoverAfterSystemResume("unlock-screen"),
+  );
   overlayManager = new OverlayManager();
   overlayManager.initialise();
   if (process.argv.includes("--faceguard-test-overlay")) {

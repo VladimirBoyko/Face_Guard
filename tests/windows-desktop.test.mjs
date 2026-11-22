@@ -74,3 +74,22 @@ test("Windows protection reasserts always-on-top z-order when shown", async () =
   assert.match(overlay, /window\.moveTop\(\)/);
   assert.match(overlay, /visibleWindowCount/);
 });
+
+test("Windows sleep and unlock fail closed and restart the session camera", async () => {
+  const [main, preload, renderer, contract] = await Promise.all([
+    readFile(new URL("../src/desktop/main.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/desktop/preload.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/FaceGuardApp.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/desktop/ipc-contract.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(main, /powerMonitor\.on\("suspend"/);
+  assert.match(main, /powerMonitor\.on\("lock-screen"/);
+  assert.match(main, /powerMonitor\.on\("resume"/);
+  assert.match(main, /powerMonitor\.on\("unlock-screen"/);
+  assert.match(main, /overlayManager\?\.setProtection\(true, "uncertain"\)/);
+  assert.match(contract, /systemResume: "faceguard:system-resume"/);
+  assert.match(preload, /onSystemResume/);
+  assert.match(renderer, /recoverCameraAfterResume/);
+  assert.match(renderer, /Reconnecting the camera after Windows resumed/);
+});

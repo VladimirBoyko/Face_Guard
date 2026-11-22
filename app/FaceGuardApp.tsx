@@ -174,6 +174,7 @@ export function FaceGuardApp() {
   const qualityCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const detectionRunningRef = useRef(false);
+  const cameraRecoveryRunningRef = useRef(false);
   const protectionRef = useRef<ProtectionState>(INITIAL_PROTECTION);
   const phaseRef = useRef<Phase>("intro");
   const observationStartedAtRef = useRef<number | null>(null);
@@ -390,6 +391,40 @@ export function FaceGuardApp() {
     return engine as unknown as HumanEngine;
   }, [isDesktop]);
 
+  const openCameraStream = useCallback(async (): Promise<MediaStream> => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Camera access is unavailable.");
+    }
+
+    stopMediaStream(streamRef.current);
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "user",
+        width: { ideal: 960 },
+        height: { ideal: 540 },
+      },
+      audio: false,
+    });
+
+    try {
+      if (!videoRef.current) throw new Error("Video preview is unavailable.");
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      return stream;
+    } catch (error) {
+      stopMediaStream(stream);
+      if (streamRef.current === stream) streamRef.current = null;
+      if (videoRef.current?.srcObject === stream) {
+        videoRef.current.srcObject = null;
+      }
+      throw error;
+    }
+  }, []);
+
   const startSession = useCallback(async () => {
     setMessage("");
     updatePhase("starting");
@@ -410,20 +445,7 @@ export function FaceGuardApp() {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 960 },
-          height: { ideal: 540 },
-        },
-        audio: false,
-      });
-      streamRef.current = stream;
-
-      if (!videoRef.current) throw new Error("Video preview is unavailable.");
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
-
+      await openCameraStream();
       engineRef.current = await createEngine();
       samplesRef.current = [];
       setSampleCount(0);
@@ -434,7 +456,88 @@ export function FaceGuardApp() {
       setMessage(cameraFailureMessage(classifyCameraStartFailure(error)));
       updatePhase("intro");
     }
-  }, [createEngine, desktopBridge, enterFullscreen, isDesktop, updatePhase]);
+  }, [
+    createEngine,
+    desktopBridge,
+    enterFullscreen,
+    isDesktop,
+    openCameraStream,
+    updatePhase,
+  ]);
+
+  const recoverCameraAfterResume = useCallback(async () => {
+    const sessionIsActive =
+      phaseRef.current === "enrolling" || phaseRef.current === "monitoring";
+    if (!desktopBridge || !sessionIsActive || cameraRecoveryRunningRef.current) {
+      return;
+    }
+
+    cameraRecoveryRunningRef.current = true;
+    const interrupted = {
+      ...protectionRef.current,
+      protected: true,
+      observation: "uncertain" as const,
+      safeHits: 0,
+      unsafeHits: 0,
+    };
+    protectionRef.current = interrupted;
+    setProtection(interrupted);
+    desktopBridge.protectionStateChanged({
+      protected: true,
+      observation: "uncertain",
+    });
+    setMessage("Reconnecting the camera after Windows resumed…");
+
+    let attempt = 0;
+    try {
+      while (
+        phaseRef.current === "enrolling" ||
+        phaseRef.current === "monitoring"
+      ) {
+        attempt += 1;
+        try {
+          const stream = await openCameraStream();
+          const stillActive =
+            phaseRef.current === "enrolling" ||
+            phaseRef.current === "monitoring";
+          if (!stillActive) {
+            stopMediaStream(stream);
+            if (streamRef.current === stream) streamRef.current = null;
+            if (videoRef.current?.srcObject === stream) {
+              videoRef.current.srcObject = null;
+            }
+            return;
+          }
+          setMessage("");
+          desktopBridge.technicalLog({
+            event: "camera-recovered-after-resume",
+            phase: phaseRef.current,
+          });
+          return;
+        } catch {
+          if (attempt === 1) {
+            desktopBridge.technicalLog({
+              event: "camera-recovery-retrying",
+              phase: phaseRef.current,
+              reason: "camera-not-ready-after-resume",
+            });
+          }
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, Math.min(attempt * 500, 2_500)),
+          );
+        }
+      }
+    } finally {
+      cameraRecoveryRunningRef.current = false;
+    }
+  }, [desktopBridge, openCameraStream]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.onSystemResume(() => {
+      void recoverCameraAfterResume();
+    });
+  }, [desktopBridge, recoverCameraAfterResume]);
 
   const monitorOnce = useCallback(async () => {
     if (
