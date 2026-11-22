@@ -15,7 +15,7 @@ test("macOS workflow builds and uploads the ARM64 PKG", async () => {
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
-  assert.match(workflow, /runs-on: macos-14/);
+  assert.match(workflow, /runs-on: macos-latest/);
   assert.match(workflow, /pnpm run desktop:package:mac/);
   assert.match(workflow, /FaceGuard-macOS-arm64-PKG/);
   assert.match(workflow, /actions\/upload-artifact@v7/);
