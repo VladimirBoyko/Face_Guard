@@ -9,8 +9,12 @@ import {
   FACEGUARD_CONFIG,
   validateFaceGuardConfiguration,
 } from "../src/core/configuration.ts";
-import { averageDescriptors } from "../src/core/descriptor.ts";
+import { averageBestTemplateSimilarities } from "../src/core/descriptor.ts";
 import { evaluateEnrolmentFaces } from "../src/core/enrolment.ts";
+import {
+  evaluateFrameQuality,
+  hasMinimumFaceSize,
+} from "../src/core/frame-quality.ts";
 import {
   advanceProtection,
   classifyObservation,
@@ -32,9 +36,9 @@ function applySequence(sequence, initial = POST_ENROLMENT_PROTECTION, config) {
   );
 }
 
-test("six valid enrolment samples produce one normalised descriptor", () => {
+test("five valid enrolment samples remain separate session templates", () => {
   const samples = [];
-  for (let index = 0; index < 6; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     const decision = evaluateEnrolmentFaces(
       [{ boxScore: 0.9, embedding: [1, index + 1, 0.5] }],
       0.5,
@@ -42,9 +46,20 @@ test("six valid enrolment samples produce one normalised descriptor", () => {
     assert.equal(decision.accepted, true);
     samples.push(decision.embedding);
   }
-  const descriptor = averageDescriptors(samples);
   assert.equal(samples.length, FACEGUARD_CONFIG.enrolment.sampleCount);
-  assert.ok(Math.abs(Math.hypot(...descriptor) - 1) < 1e-12);
+  assert.notStrictEqual(samples[0], samples[1]);
+  assert.deepEqual(samples[4], [1, 5, 0.5]);
+});
+
+test("recognition averages the strongest two enrolment template matches", () => {
+  const templates = [[0.2], [0.9], [0.7], [0.1], [0.5], [0.8]];
+  const score = averageBestTemplateSimilarities(
+    templates,
+    [1],
+    (template) => template[0],
+    2,
+  );
+  assert.ok(Math.abs(score - 0.85) < Number.EPSILON);
 });
 
 test("enrolment rejects missing, multiple and unclear faces", () => {
@@ -70,6 +85,54 @@ test("enrolment rejects missing, multiple and unclear faces", () => {
     evaluateEnrolmentFaces([{ boxScore: 0.9 }], 0.5),
     { accepted: false, reason: "unclear-face" },
   );
+  assert.deepEqual(
+    evaluateEnrolmentFaces(
+      [{ boxScore: 0.9, box: [0, 0, 50, 50], embedding: [1] }],
+      0.5,
+      72,
+    ),
+    { accepted: false, reason: "face-too-small" },
+  );
+});
+
+test("low-quality single-face frames are uncertain, while multiple faces fail closed", () => {
+  assert.equal(
+    classifyObservation({
+      faceCount: 1,
+      bestSimilarity: 0.99,
+      embeddingsComplete: true,
+      qualitySufficient: false,
+    }),
+    "uncertain",
+  );
+  assert.equal(
+    classifyObservation({
+      faceCount: 2,
+      bestSimilarity: 0.99,
+      embeddingsComplete: true,
+      qualitySufficient: false,
+    }),
+    "extra-viewer",
+  );
+});
+
+test("frame quality rejects flat images and accepts a clear high-contrast pattern", () => {
+  const thresholds = FACEGUARD_CONFIG.quality;
+  const flat = new Uint8ClampedArray(8 * 8 * 4).fill(128);
+  for (let index = 3; index < flat.length; index += 4) flat[index] = 255;
+  assert.equal(evaluateFrameQuality(flat, 8, 8, thresholds).acceptable, false);
+
+  const pattern = new Uint8ClampedArray(8 * 8 * 4);
+  for (let pixel = 0; pixel < 64; pixel += 1) {
+    const value = pixel % 2 ? 220 : 30;
+    pattern[pixel * 4] = value;
+    pattern[pixel * 4 + 1] = value;
+    pattern[pixel * 4 + 2] = value;
+    pattern[pixel * 4 + 3] = 255;
+  }
+  assert.equal(evaluateFrameQuality(pattern, 8, 8, thresholds).acceptable, true);
+  assert.equal(hasMinimumFaceSize([0, 0, 72, 80], 72), true);
+  assert.equal(hasMinimumFaceSize([0, 0, 71, 80], 72), false);
 });
 
 test("temporary recognition loss does not conceal before persistence", () => {

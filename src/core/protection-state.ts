@@ -13,6 +13,7 @@ export interface ObservationInput {
   faceCount: number;
   bestSimilarity: number;
   embeddingsComplete: boolean;
+  qualitySufficient?: boolean;
   threshold?: number;
 }
 
@@ -65,13 +66,14 @@ export function classifyObservation(
     faceCount,
     bestSimilarity,
     embeddingsComplete,
+    qualitySufficient = true,
     threshold,
   }: ObservationInput,
   config: FaceGuardConfiguration = FACEGUARD_CONFIG,
 ): ViewingState {
   if (faceCount === 0) return "absent";
   if (faceCount > 1) return "extra-viewer";
-  if (!embeddingsComplete) return "uncertain";
+  if (!embeddingsComplete || !qualitySufficient) return "uncertain";
   return bestSimilarity >= (threshold ?? config.recognition.matchThreshold)
     ? "safe"
     : "absent";
