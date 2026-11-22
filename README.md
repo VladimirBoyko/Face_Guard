@@ -83,15 +83,14 @@ continues from that background control.
 1. Select **Start private session**.
 2. Allow FaceGuard camera access when macOS or Windows asks.
 3. Be the only person visible in the camera.
-4. Take all six enrolment photos, following each red position marker. The sixth
-   marker is at the bottom centre to capture a typical typing posture.
-5. After the sixth accepted photo, FaceGuard starts monitoring automatically.
+4. Take all five enrolment photos, following each red position marker.
+5. After the fifth accepted photo, FaceGuard starts monitoring automatically.
 6. Hide the main window if desired; desktop protection continues from the menu
    bar or Windows system tray.
 7. Select **End session** in the window or **End session and clear memory** in
    the tray menu to stop the camera and clear temporary descriptors.
 
-All webcam analysis and biometric descriptors remain on the device. The six
+All webcam analysis and biometric descriptors remain on the device. The five
 photos are converted into temporary in-memory descriptors and are not uploaded
 or saved by FaceGuard.
 
@@ -176,13 +175,15 @@ pnpm run desktop:package
 ## Current MVP flow
 
 1. Explain privacy behaviour and request camera consent.
-2. Capture six guided single-user enrolment photos.
-3. Average the six photos into an in-memory face descriptor.
-4. Classify continuous observations as safe, additional viewer, absent, or
+2. Capture five guided single-user enrolment photos.
+3. Keep all five photo descriptors in session memory and compare each detected
+   face against every enrolment view.
+4. Average the strongest two template similarities for recognition.
+5. Classify continuous observations as safe, additional viewer, absent, or
    uncertain.
-5. Show one native decoy window per detected display for persistent unsafe and
+6. Show one native decoy window per detected display for persistent unsafe and
    uncertain states.
-6. Stop the webcam and clear biometric session state when the session ends.
+7. Stop the webcam and clear biometric session state when the session ends.
 
 The normal similarity threshold is `0.45`. A single mismatched or temporarily
 unclear face follows the normal absence persistence rule. Detecting an

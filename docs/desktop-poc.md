@@ -4,7 +4,7 @@
 
 FaceGuard uses an Electron main process, a sandboxed React renderer, a narrow
 preload bridge, and one native overlay window per detected display. The renderer
-owns webcam access, Human.js inference, six-photo enrolment, and the temporary
+owns webcam access, Human.js inference, five-photo enrolment, and the temporary
 descriptor. It sends only `safe`, `extra-viewer`, `absent`, or `uncertain` plus a
 protection boolean to the main process. The main process owns the menu-bar item,
 window lifecycle, camera permission request, and desktop overlay.
@@ -35,8 +35,7 @@ immediately, without waiting for the normal monitoring interval.
 ## Reproduce the states
 
 1. Run `pnpm run desktop:dev`, select **Start private session**, grant Camera
-   permission, and complete the six guided photos alone in frame. The sixth
-   photo uses the bottom-centre marker to represent a typing posture.
+   permission, and complete the five guided photos alone in frame.
 2. **Safe:** remain alone and visible after enrolment. Two consecutive safe
    observations remove active protection.
 3. **Extra-viewer:** have a second person enter the camera frame. The default is
@@ -69,7 +68,7 @@ protection overlay**. Neither method creates a facial descriptor.
 ## Runtime evidence from this implementation pass
 
 - Apple-silicon macOS package completed successfully.
-- The packaged app opened its camera, loaded local models, accepted six photos,
+- The packaged app opened its camera, loaded local models, accepted five photos,
   entered Safe monitoring, and ended with camera off and enrolment cleared.
 - With the manual protection test active, foreground activation was exercised
   for Google Chrome, Finder, Preview, Visual Studio Code, and Microsoft Word.
