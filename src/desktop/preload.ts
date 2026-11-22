@@ -27,6 +27,11 @@ const bridge: FaceGuardDesktopBridge = {
     ipcRenderer.on(IPC.requestSessionEnd, listener);
     return () => ipcRenderer.removeListener(IPC.requestSessionEnd, listener);
   },
+  onSystemResume: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.systemResume, listener);
+    return () => ipcRenderer.removeListener(IPC.systemResume, listener);
+  },
 };
 
 contextBridge.exposeInMainWorld("faceGuardDesktop", bridge);

@@ -157,6 +157,7 @@ export function FaceGuardApp() {
   const desktopPlatform = desktopBridge?.platform;
   const [phase, setPhase] = useState<Phase>("intro");
   const [message, setMessage] = useState("");
+  const [enrolmentError, setEnrolmentError] = useState("");
   const [sampleCount, setSampleCount] = useState(0);
   const [protection, setProtection] =
     useState<ProtectionState>(INITIAL_PROTECTION);
@@ -174,6 +175,7 @@ export function FaceGuardApp() {
   const qualityCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const detectionRunningRef = useRef(false);
+  const cameraRecoveryRunningRef = useRef(false);
   const protectionRef = useRef<ProtectionState>(INITIAL_PROTECTION);
   const phaseRef = useRef<Phase>("intro");
   const observationStartedAtRef = useRef<number | null>(null);
@@ -239,6 +241,7 @@ export function FaceGuardApp() {
     setSampleCount(0);
     setLastCheckMs(null);
     setMessage("");
+    setEnrolmentError("");
     updatePhase("ended");
     desktopBridge?.sessionEnded();
     if (!isDesktop && document.fullscreenElement) {
@@ -390,8 +393,43 @@ export function FaceGuardApp() {
     return engine as unknown as HumanEngine;
   }, [isDesktop]);
 
+  const openCameraStream = useCallback(async (): Promise<MediaStream> => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Camera access is unavailable.");
+    }
+
+    stopMediaStream(streamRef.current);
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "user",
+        width: { ideal: 960 },
+        height: { ideal: 540 },
+      },
+      audio: false,
+    });
+
+    try {
+      if (!videoRef.current) throw new Error("Video preview is unavailable.");
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      return stream;
+    } catch (error) {
+      stopMediaStream(stream);
+      if (streamRef.current === stream) streamRef.current = null;
+      if (videoRef.current?.srcObject === stream) {
+        videoRef.current.srcObject = null;
+      }
+      throw error;
+    }
+  }, []);
+
   const startSession = useCallback(async () => {
     setMessage("");
+    setEnrolmentError("");
     updatePhase("starting");
     void enterFullscreen();
     if (desktopBridge && !(await desktopBridge.requestCameraPermission())) {
@@ -410,20 +448,7 @@ export function FaceGuardApp() {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 960 },
-          height: { ideal: 540 },
-        },
-        audio: false,
-      });
-      streamRef.current = stream;
-
-      if (!videoRef.current) throw new Error("Video preview is unavailable.");
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
-
+      await openCameraStream();
       engineRef.current = await createEngine();
       samplesRef.current = [];
       setSampleCount(0);
@@ -434,7 +459,88 @@ export function FaceGuardApp() {
       setMessage(cameraFailureMessage(classifyCameraStartFailure(error)));
       updatePhase("intro");
     }
-  }, [createEngine, desktopBridge, enterFullscreen, isDesktop, updatePhase]);
+  }, [
+    createEngine,
+    desktopBridge,
+    enterFullscreen,
+    isDesktop,
+    openCameraStream,
+    updatePhase,
+  ]);
+
+  const recoverCameraAfterResume = useCallback(async () => {
+    const sessionIsActive =
+      phaseRef.current === "enrolling" || phaseRef.current === "monitoring";
+    if (!desktopBridge || !sessionIsActive || cameraRecoveryRunningRef.current) {
+      return;
+    }
+
+    cameraRecoveryRunningRef.current = true;
+    const interrupted = {
+      ...protectionRef.current,
+      protected: true,
+      observation: "uncertain" as const,
+      safeHits: 0,
+      unsafeHits: 0,
+    };
+    protectionRef.current = interrupted;
+    setProtection(interrupted);
+    desktopBridge.protectionStateChanged({
+      protected: true,
+      observation: "uncertain",
+    });
+    setMessage("Reconnecting the camera after Windows resumed…");
+
+    let attempt = 0;
+    try {
+      while (
+        phaseRef.current === "enrolling" ||
+        phaseRef.current === "monitoring"
+      ) {
+        attempt += 1;
+        try {
+          const stream = await openCameraStream();
+          const stillActive =
+            phaseRef.current === "enrolling" ||
+            phaseRef.current === "monitoring";
+          if (!stillActive) {
+            stopMediaStream(stream);
+            if (streamRef.current === stream) streamRef.current = null;
+            if (videoRef.current?.srcObject === stream) {
+              videoRef.current.srcObject = null;
+            }
+            return;
+          }
+          setMessage("");
+          desktopBridge.technicalLog({
+            event: "camera-recovered-after-resume",
+            phase: phaseRef.current,
+          });
+          return;
+        } catch {
+          if (attempt === 1) {
+            desktopBridge.technicalLog({
+              event: "camera-recovery-retrying",
+              phase: phaseRef.current,
+              reason: "camera-not-ready-after-resume",
+            });
+          }
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, Math.min(attempt * 500, 2_500)),
+          );
+        }
+      }
+    } finally {
+      cameraRecoveryRunningRef.current = false;
+    }
+  }, [desktopBridge, openCameraStream]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.onSystemResume(() => {
+      void recoverCameraAfterResume();
+    });
+  }, [desktopBridge, recoverCameraAfterResume]);
 
   const monitorOnce = useCallback(async () => {
     if (
@@ -552,7 +658,7 @@ export function FaceGuardApp() {
     }
 
     detectionRunningRef.current = true;
-    setMessage("Checking this photo…");
+    setEnrolmentError("");
     try {
       const result = await engineRef.current.detect(videoRef.current);
       const decision = evaluateEnrolmentFaces(
@@ -561,7 +667,7 @@ export function FaceGuardApp() {
         FACEGUARD_CONFIG.enrolment.minimumFaceSizePx,
       );
       if (!decision.accepted) {
-        setMessage(
+        setEnrolmentError(
           decision.reason === "no-face"
             ? "No clear face detected. Face the camera in even lighting and try again."
             : decision.reason === "multiple-faces"
@@ -579,7 +685,7 @@ export function FaceGuardApp() {
         result.face[0]?.box,
       );
       if (!frameQuality.acceptable) {
-        setMessage(
+        setEnrolmentError(
           frameQuality.reason === "blurred"
             ? "This photo looks blurred. Hold still, turn your head to the marker, and try again."
             : "The lighting is not clear enough. Use even front lighting and try again.",
@@ -598,13 +704,14 @@ export function FaceGuardApp() {
         duplicateSimilarity >=
         FACEGUARD_CONFIG.enrolment.maximumDuplicateSimilarity
       ) {
-        setMessage(
+        setEnrolmentError(
           "This angle is too similar to an earlier photo. Turn your head—not only your eyes—towards the red marker and try again.",
         );
         return;
       }
 
       samplesRef.current.push(decision.embedding);
+      setEnrolmentError("");
       const count = samplesRef.current.length;
       setSampleCount(count);
 
@@ -612,12 +719,12 @@ export function FaceGuardApp() {
         setMessage("");
         beginMonitoring();
       } else {
-        setMessage(
-          `Photo ${count} accepted. Turn your head towards the next red marker.`,
-        );
+        setMessage("");
       }
     } catch {
-      setMessage("The local face check failed. Keep the camera clear and try again.");
+      setEnrolmentError(
+        "The local face check failed. Keep the camera clear and try again.",
+      );
     } finally {
       detectionRunningRef.current = false;
     }
@@ -626,6 +733,7 @@ export function FaceGuardApp() {
   const restart = useCallback(() => {
     updatePhase("intro");
     setMessage("");
+    setEnrolmentError("");
   }, [updatePhase]);
 
   const stateCopy = STATE_COPY[protection.observation];
@@ -789,7 +897,9 @@ export function FaceGuardApp() {
             </div>
           )}
 
-          {message && <p className="inline-message" role="alert">{message}</p>}
+          {message && phase !== "enrolling" && (
+            <p className="inline-message" role="alert">{message}</p>
+          )}
         </div>
 
         <div className="workspace-card" aria-label="FaceGuard protected workspace">
@@ -867,9 +977,15 @@ export function FaceGuardApp() {
           >
             <span className="gaze-dot" aria-hidden="true" />
           </button>
-          <div className="gaze-message">
-            <strong>Turn your head toward the red spot and click</strong>
+          <div
+            className={`gaze-message${enrolmentError ? " gaze-feedback" : ""}`}
+            role={enrolmentError ? "alert" : undefined}
+          >
+            <strong>
+              {enrolmentError || "Turn your head toward the red spot and click"}
+            </strong>
             <small>
+              {enrolmentError ? "Please check · " : ""}
               Photo {sampleCount + 1} · {currentPhotoDirection.label}
             </small>
           </div>

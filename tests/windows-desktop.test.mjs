@@ -38,6 +38,18 @@ test("Windows packaging includes Squirrel installer and a native icon", async ()
   await access(new URL("../assets/FaceGuard.ico", import.meta.url));
 });
 
+test("Windows tray uses a visible high-contrast FG icon", async () => {
+  const tray = await readFile(
+    new URL("../src/desktop/tray.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(tray, /const WINDOWS_TRAY_ICON/);
+  assert.match(tray, /fill="#002147"/);
+  assert.match(tray, /fill="#ffffff"/);
+  assert.match(tray, /process\.platform === "win32"[\s\S]*WINDOWS_TRAY_ICON/);
+});
+
 test("Windows workflow uses Node.js 24-compatible action runtimes", async () => {
   const workflow = await readFile(
     new URL("../.github/workflows/windows-build.yml", import.meta.url),
@@ -61,4 +73,23 @@ test("Windows protection reasserts always-on-top z-order when shown", async () =
   assert.match(overlay, /window\.showInactive\(\)/);
   assert.match(overlay, /window\.moveTop\(\)/);
   assert.match(overlay, /visibleWindowCount/);
+});
+
+test("Windows sleep and unlock fail closed and restart the session camera", async () => {
+  const [main, preload, renderer, contract] = await Promise.all([
+    readFile(new URL("../src/desktop/main.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/desktop/preload.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/FaceGuardApp.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/desktop/ipc-contract.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(main, /powerMonitor\.on\("suspend"/);
+  assert.match(main, /powerMonitor\.on\("lock-screen"/);
+  assert.match(main, /powerMonitor\.on\("resume"/);
+  assert.match(main, /powerMonitor\.on\("unlock-screen"/);
+  assert.match(main, /overlayManager\?\.setProtection\(true, "uncertain"\)/);
+  assert.match(contract, /systemResume: "faceguard:system-resume"/);
+  assert.match(preload, /onSystemResume/);
+  assert.match(renderer, /recoverCameraAfterResume/);
+  assert.match(renderer, /Reconnecting the camera after Windows resumed/);
 });

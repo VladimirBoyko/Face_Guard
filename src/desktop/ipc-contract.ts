@@ -11,6 +11,7 @@ export const IPC = {
   requestSessionEnd: "faceguard:request-session-end",
   hideControlWindow: "faceguard:hide-control-window",
   technicalLog: "faceguard:technical-log",
+  systemResume: "faceguard:system-resume",
 } as const;
 
 export type ProtectionStateMessage = {
@@ -51,4 +52,5 @@ export type FaceGuardDesktopBridge = {
   hideControlWindow: () => void;
   technicalLog: (message: RendererTechnicalLog) => void;
   onSessionEndRequested: (callback: () => void) => () => void;
+  onSystemResume: (callback: () => void) => () => void;
 };

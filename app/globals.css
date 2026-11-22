@@ -451,6 +451,9 @@ button {
 .gaze-message { background: #e52c1c; border: 2px solid rgba(255, 255, 255, 0.92); border-radius: 8px; box-shadow: 0 10px 26px rgba(71, 14, 8, 0.3); padding: 14px 16px; pointer-events: none; position: absolute; width: 270px; }
 .gaze-message strong { display: block; font-size: 17px; line-height: 1.25; }
 .gaze-message small { display: block; font-size: 11px; font-weight: 760; letter-spacing: 0.04em; margin-top: 8px; opacity: 0.82; text-transform: uppercase; }
+.gaze-message.gaze-feedback { background: #fff4f1; border: 3px solid #e52c1c; box-shadow: 0 14px 34px rgba(71, 14, 8, 0.38); color: #7d241c; padding: 17px 19px; width: 340px; }
+.gaze-message.gaze-feedback strong { font-size: 18px; line-height: 1.35; }
+.gaze-message.gaze-feedback small { color: #a4362c; opacity: 1; }
 .gaze-target.centre .gaze-message { left: 30px; top: 78px; transform: translateX(-50%); }
 .gaze-target.upper-left .gaze-message { left: 72px; top: 72px; }
 .gaze-target.lower-left .gaze-message { bottom: 72px; left: 72px; }
@@ -543,6 +546,7 @@ footer span { color: #7caeda; }
   .gaze-target.upper-left, .gaze-target.upper-right { top: 10px; }
   .gaze-target.lower-left, .gaze-target.lower-right { bottom: 10px; }
   .gaze-message { width: 230px; }
+  .gaze-message.gaze-feedback { width: min(280px, calc(100vw - 100px)); }
   .gaze-message strong { font-size: 15px; }
   .how-it-works { gap: 45px; padding: 64px 24px; }
   .how-it-works ol { grid-template-columns: 1fr; }
