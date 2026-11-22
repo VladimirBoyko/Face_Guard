@@ -38,6 +38,19 @@ test("Windows packaging includes Squirrel installer and a native icon", async ()
   await access(new URL("../assets/FaceGuard.ico", import.meta.url));
 });
 
+test("Windows workflow uses Node.js 24-compatible action runtimes", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/windows-build.yml", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(workflow, /actions\/checkout@v7/);
+  assert.match(workflow, /pnpm\/action-setup@v6/);
+  assert.match(workflow, /actions\/setup-node@v7/);
+  assert.match(workflow, /actions\/upload-artifact@v7/);
+  assert.doesNotMatch(workflow, /uses: .+@v4/);
+});
+
 test("Windows protection reasserts always-on-top z-order when shown", async () => {
   const overlay = await readFile(
     new URL("../src/desktop/overlay-manager.ts", import.meta.url),
