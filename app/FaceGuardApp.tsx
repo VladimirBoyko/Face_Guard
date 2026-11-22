@@ -892,7 +892,9 @@ export function FaceGuardApp() {
             </div>
           )}
 
-          {message && <p className="inline-message" role="alert">{message}</p>}
+          {message && phase !== "enrolling" && (
+            <p className="inline-message" role="alert">{message}</p>
+          )}
         </div>
 
         <div className="workspace-card" aria-label="FaceGuard protected workspace">
@@ -970,9 +972,15 @@ export function FaceGuardApp() {
           >
             <span className="gaze-dot" aria-hidden="true" />
           </button>
-          <div className="gaze-message">
-            <strong>Turn your head toward the red spot and click</strong>
+          <div
+            className={`gaze-message${message ? " gaze-feedback" : ""}`}
+            role={message ? "alert" : undefined}
+          >
+            <strong>
+              {message || "Turn your head toward the red spot and click"}
+            </strong>
             <small>
+              {message ? "Please check · " : ""}
               Photo {sampleCount + 1} · {currentPhotoDirection.label}
             </small>
           </div>
