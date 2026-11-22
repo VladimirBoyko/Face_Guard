@@ -7,7 +7,12 @@ export const MATCH_THRESHOLD = FACEGUARD_CONFIG.recognition.matchThreshold;
 export const RECOVERY_SAFE_HITS =
   FACEGUARD_CONFIG.monitoring.recoverySafeObservations;
 
-export type ViewingState = "safe" | "extra-viewer" | "absent" | "uncertain";
+export type ViewingState =
+  | "safe"
+  | "extra-viewer"
+  | "unmatched-viewer"
+  | "absent"
+  | "uncertain";
 
 export interface ObservationInput {
   faceCount: number;
@@ -78,7 +83,7 @@ export function classifyObservation(
   if (!embeddingsComplete || !qualitySufficient) return "uncertain";
   return bestSimilarity >= (threshold ?? config.recognition.matchThreshold)
     ? "safe"
-    : "absent";
+    : "unmatched-viewer";
 }
 
 function persistenceFor(
@@ -87,6 +92,9 @@ function persistenceFor(
 ): number {
   if (observation === "extra-viewer") {
     return config.monitoring.additionalViewerPersistence;
+  }
+  if (observation === "unmatched-viewer") {
+    return config.monitoring.unmatchedViewerPersistence;
   }
   if (observation === "uncertain") {
     return config.monitoring.uncertainPersistence;
@@ -116,13 +124,16 @@ export function advanceProtection(
   }
 
   next.safeHits = 0;
-  if (observation === "extra-viewer") {
-    next.extraViewerLatched = true;
-  }
   next.unsafeHits =
     previous.observation === observation ? previous.unsafeHits + 1 : 1;
   if (next.unsafeHits >= persistenceFor(observation, config)) {
     next.protected = true;
+    if (
+      observation === "extra-viewer" ||
+      observation === "unmatched-viewer"
+    ) {
+      next.extraViewerLatched = true;
+    }
   }
   return next;
 }

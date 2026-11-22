@@ -166,6 +166,24 @@ test("additional viewer fails closed immediately and two safe checks recover", (
   assert.equal(recovered.extraViewerLatched, false);
 });
 
+test("one clear unmatched viewer conceals after two consecutive checks", () => {
+  const observation = classifyObservation({
+    faceCount: 1,
+    bestSimilarity: 0.2,
+    embeddingsComplete: true,
+    qualitySufficient: true,
+  });
+  assert.equal(observation, "unmatched-viewer");
+
+  const first = applySequence([observation]);
+  assert.equal(first.protected, false);
+  assert.equal(first.extraViewerLatched, false);
+
+  const second = advanceProtection(first, observation);
+  assert.equal(second.protected, true);
+  assert.equal(second.extraViewerLatched, true);
+});
+
 test("extra-viewer protection remains latched through absence and uncertainty", () => {
   let state = applySequence(["extra-viewer"]);
   state = advanceProtection(state, "absent");
@@ -189,7 +207,7 @@ test("only an unauthorised viewer cannot clear an active overlay", () => {
     embeddingsComplete: true,
     threshold: recognitionThresholdFor(state),
   });
-  assert.equal(remainingUnknownViewer, "absent");
+  assert.equal(remainingUnknownViewer, "unmatched-viewer");
 
   state = advanceProtection(state, remainingUnknownViewer);
   assert.equal(state.protected, true);
@@ -232,7 +250,7 @@ test("a stranger appearing after absence cannot clear the overlay", () => {
     embeddingsComplete: true,
     threshold: recognitionThresholdFor(state),
   });
-  assert.equal(stranger, "absent");
+  assert.equal(stranger, "unmatched-viewer");
 
   state = advanceProtection(state, stranger);
   state = advanceProtection(state, stranger);
@@ -381,6 +399,10 @@ test("transition timing remains derived from central configuration", () => {
   assert.equal(
     observedSpan(FACEGUARD_CONFIG.monitoring.additionalViewerPersistence),
     0,
+  );
+  assert.equal(
+    observedSpan(FACEGUARD_CONFIG.monitoring.unmatchedViewerPersistence),
+    650,
   );
   assert.equal(
     observedSpan(FACEGUARD_CONFIG.monitoring.absencePersistence),

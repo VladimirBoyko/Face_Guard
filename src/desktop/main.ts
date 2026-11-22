@@ -51,6 +51,9 @@ function stateLabel(): string {
   if (!sessionActive) return "Ready";
   if (currentObservation === "safe") return "Monitoring · Safe";
   if (currentObservation === "extra-viewer") return "Protected · Extra viewer";
+  if (currentObservation === "unmatched-viewer") {
+    return "Protected · Unrecognised viewer";
+  }
   if (currentObservation === "absent") return "Protected · User absent";
   return "Protected · Uncertain";
 }
