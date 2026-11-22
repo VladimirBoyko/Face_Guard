@@ -1,6 +1,6 @@
 {
   "name": "faceguard",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local-only active-session privacy protection for macOS and Windows.",
   "author": "Vladimir Boyko",
   "private": true,

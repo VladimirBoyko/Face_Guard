@@ -138,6 +138,11 @@ const STATE_COPY: Record<
     detail: "Protected content is concealed.",
     tone: "danger",
   },
+  "unmatched-viewer": {
+    label: "Unrecognised viewer detected",
+    detail: "Protected content is concealed.",
+    tone: "danger",
+  },
   absent: {
     label: "Enrolled user not detected",
     detail: "Protected content is concealed.",

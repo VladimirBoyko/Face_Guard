@@ -45,9 +45,12 @@ test("Windows tray uses a visible high-contrast FG icon", async () => {
   );
 
   assert.match(tray, /const WINDOWS_TRAY_ICON/);
-  assert.match(tray, /fill="#002147"/);
-  assert.match(tray, /fill="#ffffff"/);
+  assert.match(tray, /data:image\/png;base64/);
   assert.match(tray, /process\.platform === "win32"[\s\S]*WINDOWS_TRAY_ICON/);
+  assert.match(
+    tray,
+    /process\.platform === "win32"[\s\S]*\? sourceImage[\s\S]*: sourceImage\.resize/,
+  );
 });
 
 test("Windows workflow uses Node.js 24-compatible action runtimes", async () => {

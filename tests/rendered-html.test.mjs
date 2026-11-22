@@ -70,7 +70,7 @@ test("viewing-state rules fail closed and recover on configured safe evidence", 
       bestSimilarity: 0.2,
       embeddingsComplete: true,
     }),
-    "absent",
+    "unmatched-viewer",
   );
   assert.equal(
     classifyObservation({

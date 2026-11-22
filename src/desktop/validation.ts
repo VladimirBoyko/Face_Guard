@@ -8,6 +8,7 @@ import { isSafeDecoyDataUrl } from "../core/decoy.ts";
 const VIEWING_STATES = new Set([
   "safe",
   "extra-viewer",
+  "unmatched-viewer",
   "absent",
   "uncertain",
 ]);
