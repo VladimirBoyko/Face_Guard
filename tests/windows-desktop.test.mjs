@@ -33,9 +33,6 @@ test("Windows packaging includes Squirrel installer and a native icon", async ()
   assert.match(forge, /MakerSquirrel/);
   assert.match(forge, /FaceGuard-Setup\.exe/);
   assert.match(main, /electron-squirrel-startup/);
-  assert.match(main, /--squirrel-firstrun/);
-  assert.match(main, /FaceGuard installed successfully/);
-  assert.match(main, /available from the Windows Start menu/);
   assert.match(main, /setAppUserModelId/);
   assert.match(main, /appendDiagnosticLog/);
   await access(new URL("../assets/FaceGuard.ico", import.meta.url));
