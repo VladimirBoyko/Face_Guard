@@ -38,6 +38,21 @@ test("Windows packaging includes Squirrel installer and a native icon", async ()
   await access(new URL("../assets/FaceGuard.ico", import.meta.url));
 });
 
+test("Windows tray uses a visible high-contrast FG icon", async () => {
+  const tray = await readFile(
+    new URL("../src/desktop/tray.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(tray, /const WINDOWS_TRAY_ICON/);
+  assert.match(tray, /data:image\/png;base64/);
+  assert.match(tray, /process\.platform === "win32"[\s\S]*WINDOWS_TRAY_ICON/);
+  assert.match(
+    tray,
+    /process\.platform === "win32"[\s\S]*\? sourceImage[\s\S]*: sourceImage\.resize/,
+  );
+});
+
 test("Windows workflow uses Node.js 24-compatible action runtimes", async () => {
   const workflow = await readFile(
     new URL("../.github/workflows/windows-build.yml", import.meta.url),
@@ -61,4 +76,26 @@ test("Windows protection reasserts always-on-top z-order when shown", async () =
   assert.match(overlay, /window\.showInactive\(\)/);
   assert.match(overlay, /window\.moveTop\(\)/);
   assert.match(overlay, /visibleWindowCount/);
+});
+
+test("sleep and unlock fail closed and restart the camera on macOS and Windows", async () => {
+  const [main, preload, renderer, contract] = await Promise.all([
+    readFile(new URL("../src/desktop/main.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/desktop/preload.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/FaceGuardApp.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/desktop/ipc-contract.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(main, /powerMonitor\.on\("suspend"/);
+  assert.match(main, /powerMonitor\.on\("lock-screen"/);
+  assert.match(main, /powerMonitor\.on\("resume"/);
+  assert.match(main, /powerMonitor\.on\("unlock-screen"/);
+  assert.match(main, /overlayManager\?\.setProtection\(true, "uncertain"\)/);
+  assert.match(contract, /systemResume: "faceguard:system-resume"/);
+  assert.match(preload, /onSystemResume/);
+  assert.match(renderer, /recoverCameraAfterResume/);
+  assert.match(renderer, /desktopPlatform === "macos"/);
+  assert.match(renderer, /openCameraStream\(5_000\)/);
+  assert.match(renderer, /Camera request was superseded/);
+  assert.match(renderer, /Reconnecting the camera after the computer resumed/);
 });

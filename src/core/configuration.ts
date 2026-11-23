@@ -36,6 +36,7 @@ export type FaceGuardConfiguration = {
     intervalMs: number;
     absencePersistence: number;
     additionalViewerPersistence: number;
+    unmatchedViewerPersistence: number;
     uncertainPersistence: number;
     concealmentDelayMs: number;
     recoverySafeObservations: number;
@@ -82,6 +83,7 @@ export const FACEGUARD_CONFIG: FaceGuardConfiguration = {
     intervalMs: 650,
     absencePersistence: 6,
     additionalViewerPersistence: 1,
+    unmatchedViewerPersistence: 2,
     uncertainPersistence: 3,
     concealmentDelayMs: 0,
     recoverySafeObservations: 2,
@@ -133,6 +135,10 @@ export function validateFaceGuardConfiguration(
     [
       "monitoring.additionalViewerPersistence",
       config.monitoring.additionalViewerPersistence,
+    ],
+    [
+      "monitoring.unmatchedViewerPersistence",
+      config.monitoring.unmatchedViewerPersistence,
     ],
     ["monitoring.uncertainPersistence", config.monitoring.uncertainPersistence],
     [

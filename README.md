@@ -110,6 +110,17 @@ The unsigned development application is produced under
 `out/FaceGuard-darwin-arm64/FaceGuard.app`. It is for local proof-of-concept
 testing and is not notarised for distribution.
 
+To create the macOS ARM64 installer package:
+
+```bash
+pnpm run desktop:package:mac
+```
+
+The installer is produced at `out/FaceGuard-0.1.2-arm64.pkg`. You can also run
+the **Build macOS PKG** GitHub Actions workflow and download its
+`FaceGuard-macOS-arm64-PKG` artifact. The proof-of-concept package remains
+unsigned and unnotarised.
+
 ### 8. Build the Windows installer
 
 On a Windows 10/11 x64 computer:

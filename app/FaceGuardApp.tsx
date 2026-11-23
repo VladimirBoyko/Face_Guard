@@ -38,6 +38,13 @@ import {
   clearSessionBiometricMemory,
   stopMediaStream,
 } from "../src/core/session-cleanup";
+import {
+  effectiveProtectionState,
+  isProtectionPaused,
+  secondsUntilPauseEnds,
+  TEN_MINUTE_PAUSE_MS,
+  type ProtectionPauseMode,
+} from "../src/core/protection-pause";
 
 type Phase =
   | "intro"
@@ -67,6 +74,12 @@ type HumanEngine = {
 const ENROLMENT_SAMPLES = FACEGUARD_CONFIG.enrolment.sampleCount;
 const MONITOR_INTERVAL_MS = FACEGUARD_CONFIG.monitoring.intervalMs;
 const PHOTO_DIRECTIONS = FACEGUARD_CONFIG.enrolment.directions;
+
+function formatPauseCountdown(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
 
 function readVideoFrameQuality(
   video: HTMLVideoElement,
@@ -138,6 +151,11 @@ const STATE_COPY: Record<
     detail: "Protected content is concealed.",
     tone: "danger",
   },
+  "unmatched-viewer": {
+    label: "Unrecognised viewer detected",
+    detail: "Protected content is concealed.",
+    tone: "danger",
+  },
   absent: {
     label: "Enrolled user not detected",
     detail: "Protected content is concealed.",
@@ -157,11 +175,19 @@ export function FaceGuardApp() {
   const desktopPlatform = desktopBridge?.platform;
   const [phase, setPhase] = useState<Phase>("intro");
   const [message, setMessage] = useState("");
+  const [enrolmentError, setEnrolmentError] = useState("");
   const [sampleCount, setSampleCount] = useState(0);
   const [protection, setProtection] =
     useState<ProtectionState>(INITIAL_PROTECTION);
+  const [pauseMode, setPauseMode] =
+    useState<ProtectionPauseMode>("active");
+  const [pauseEndsAt, setPauseEndsAt] = useState<number | null>(null);
+  const [pauseSecondsRemaining, setPauseSecondsRemaining] = useState(0);
   const [lastCheckMs, setLastCheckMs] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [usesExternalEnrolmentMarker, setUsesExternalEnrolmentMarker] =
+    useState(false);
+  const [showsOtherScreenCue, setShowsOtherScreenCue] = useState(false);
   const [customDecoy, setCustomDecoy] = useState<{
     dataUrl: string;
     name: string;
@@ -174,6 +200,8 @@ export function FaceGuardApp() {
   const qualityCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const detectionRunningRef = useRef(false);
+  const cameraRecoveryRunningRef = useRef(false);
+  const cameraOpenGenerationRef = useRef(0);
   const protectionRef = useRef<ProtectionState>(INITIAL_PROTECTION);
   const phaseRef = useRef<Phase>("intro");
   const observationStartedAtRef = useRef<number | null>(null);
@@ -182,6 +210,44 @@ export function FaceGuardApp() {
   );
 
   const decoyImageSrc = customDecoy?.dataUrl ?? defaultDecoyImage;
+  const currentPhotoDirection =
+    PHOTO_DIRECTIONS[Math.min(sampleCount, PHOTO_DIRECTIONS.length - 1)];
+  const protectionPaused = isProtectionPaused(pauseMode);
+
+  const restoreProtection = useCallback(() => {
+    setPauseMode("active");
+    setPauseEndsAt(null);
+    setPauseSecondsRemaining(0);
+  }, []);
+
+  const pauseProtectionForTenMinutes = useCallback(() => {
+    const endsAt = Date.now() + TEN_MINUTE_PAUSE_MS;
+    setPauseMode("timed");
+    setPauseEndsAt(endsAt);
+    setPauseSecondsRemaining(TEN_MINUTE_PAUSE_MS / 1_000);
+  }, []);
+
+  const toggleManualProtectionPause = useCallback(() => {
+    if (protectionPaused) {
+      restoreProtection();
+      return;
+    }
+    setPauseMode("manual");
+    setPauseEndsAt(null);
+    setPauseSecondsRemaining(0);
+  }, [protectionPaused, restoreProtection]);
+
+  useEffect(() => {
+    if (pauseMode !== "timed" || pauseEndsAt === null) return;
+    const updateCountdown = () => {
+      const remaining = secondsUntilPauseEnds(pauseEndsAt);
+      setPauseSecondsRemaining(remaining);
+      if (remaining === 0) restoreProtection();
+    };
+    updateCountdown();
+    const countdown = window.setInterval(updateCountdown, 1_000);
+    return () => window.clearInterval(countdown);
+  }, [pauseEndsAt, pauseMode, restoreProtection]);
 
   useEffect(() => {
     if (!desktopBridge) return;
@@ -239,12 +305,21 @@ export function FaceGuardApp() {
     setSampleCount(0);
     setLastCheckMs(null);
     setMessage("");
+    setEnrolmentError("");
+    restoreProtection();
     updatePhase("ended");
     desktopBridge?.sessionEnded();
     if (!isDesktop && document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined);
     }
-  }, [clearBiometricMemory, desktopBridge, isDesktop, stopMonitoring, updatePhase]);
+  }, [
+    clearBiometricMemory,
+    desktopBridge,
+    isDesktop,
+    restoreProtection,
+    stopMonitoring,
+    updatePhase,
+  ]);
 
   useEffect(() => {
     const release = () => {
@@ -331,12 +406,16 @@ export function FaceGuardApp() {
     if (desktopProtectionTimerRef.current) {
       clearTimeout(desktopProtectionTimerRef.current);
     }
-    const delay = protection.protected
+    const effectiveProtected = effectiveProtectionState(
+      protection.protected,
+      pauseMode,
+    );
+    const delay = effectiveProtected
       ? FACEGUARD_CONFIG.monitoring.concealmentDelayMs
       : FACEGUARD_CONFIG.monitoring.recoveryDelayMs;
     desktopProtectionTimerRef.current = setTimeout(() => {
       desktopBridge.protectionStateChanged({
-        protected: protection.protected,
+        protected: effectiveProtected,
         observation: protection.observation,
       });
       desktopProtectionTimerRef.current = null;
@@ -347,7 +426,13 @@ export function FaceGuardApp() {
         desktopProtectionTimerRef.current = null;
       }
     };
-  }, [desktopBridge, phase, protection.observation, protection.protected]);
+  }, [
+    desktopBridge,
+    pauseMode,
+    phase,
+    protection.observation,
+    protection.protected,
+  ]);
 
   const createEngine = useCallback(async (): Promise<HumanEngine> => {
     const { Human } = await import("@vladmandic/human");
@@ -390,8 +475,69 @@ export function FaceGuardApp() {
     return engine as unknown as HumanEngine;
   }, [isDesktop]);
 
+  const openCameraStream = useCallback(async (
+    timeoutMs?: number,
+  ): Promise<MediaStream> => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Camera access is unavailable.");
+    }
+
+    const generation = ++cameraOpenGenerationRef.current;
+    stopMediaStream(streamRef.current);
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+
+    const streamRequest = navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "user",
+        width: { ideal: 960 },
+        height: { ideal: 540 },
+      },
+      audio: false,
+    });
+    const guardedStreamRequest = streamRequest.then((stream) => {
+      if (generation !== cameraOpenGenerationRef.current) {
+        stopMediaStream(stream);
+        throw new Error("Camera request was superseded.");
+      }
+      return stream;
+    });
+    let timeoutId: number | undefined;
+    const stream = timeoutMs
+      ? await Promise.race([
+          guardedStreamRequest,
+          new Promise<never>((_resolve, reject) => {
+            timeoutId = window.setTimeout(() => {
+              if (generation === cameraOpenGenerationRef.current) {
+                cameraOpenGenerationRef.current += 1;
+              }
+              reject(new Error("Camera did not recover in time."));
+            }, timeoutMs);
+          }),
+        ]).finally(() => {
+          if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+        })
+      : await guardedStreamRequest;
+
+    try {
+      if (!videoRef.current) throw new Error("Video preview is unavailable.");
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      return stream;
+    } catch (error) {
+      stopMediaStream(stream);
+      if (streamRef.current === stream) streamRef.current = null;
+      if (videoRef.current?.srcObject === stream) {
+        videoRef.current.srcObject = null;
+      }
+      throw error;
+    }
+  }, []);
+
   const startSession = useCallback(async () => {
     setMessage("");
+    setEnrolmentError("");
     updatePhase("starting");
     void enterFullscreen();
     if (desktopBridge && !(await desktopBridge.requestCameraPermission())) {
@@ -410,20 +556,7 @@ export function FaceGuardApp() {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 960 },
-          height: { ideal: 540 },
-        },
-        audio: false,
-      });
-      streamRef.current = stream;
-
-      if (!videoRef.current) throw new Error("Video preview is unavailable.");
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
-
+      await openCameraStream();
       engineRef.current = await createEngine();
       samplesRef.current = [];
       setSampleCount(0);
@@ -434,7 +567,91 @@ export function FaceGuardApp() {
       setMessage(cameraFailureMessage(classifyCameraStartFailure(error)));
       updatePhase("intro");
     }
-  }, [createEngine, desktopBridge, enterFullscreen, isDesktop, updatePhase]);
+  }, [
+    createEngine,
+    desktopBridge,
+    enterFullscreen,
+    isDesktop,
+    openCameraStream,
+    updatePhase,
+  ]);
+
+  const recoverCameraAfterResume = useCallback(async () => {
+    const sessionIsActive =
+      phaseRef.current === "enrolling" || phaseRef.current === "monitoring";
+    if (!desktopBridge || !sessionIsActive || cameraRecoveryRunningRef.current) {
+      return;
+    }
+
+    cameraRecoveryRunningRef.current = true;
+    const interrupted = {
+      ...protectionRef.current,
+      protected: true,
+      observation: "uncertain" as const,
+      safeHits: 0,
+      unsafeHits: 0,
+    };
+    protectionRef.current = interrupted;
+    setProtection(interrupted);
+    desktopBridge.protectionStateChanged({
+      protected: true,
+      observation: "uncertain",
+    });
+    setMessage("Reconnecting the camera after the computer resumed…");
+
+    let attempt = 0;
+    try {
+      if (desktopPlatform === "macos") {
+        await new Promise((resolve) => window.setTimeout(resolve, 750));
+      }
+      while (
+        phaseRef.current === "enrolling" ||
+        phaseRef.current === "monitoring"
+      ) {
+        attempt += 1;
+        try {
+          const stream = await openCameraStream(5_000);
+          const stillActive =
+            phaseRef.current === "enrolling" ||
+            phaseRef.current === "monitoring";
+          if (!stillActive) {
+            stopMediaStream(stream);
+            if (streamRef.current === stream) streamRef.current = null;
+            if (videoRef.current?.srcObject === stream) {
+              videoRef.current.srcObject = null;
+            }
+            return;
+          }
+          setMessage("");
+          desktopBridge.technicalLog({
+            event: "camera-recovered-after-resume",
+            phase: phaseRef.current,
+          });
+          return;
+        } catch {
+          if (attempt === 1) {
+            desktopBridge.technicalLog({
+              event: "camera-recovery-retrying",
+              phase: phaseRef.current,
+              reason: "camera-not-ready-after-resume",
+            });
+          }
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, Math.min(attempt * 500, 2_500)),
+          );
+        }
+      }
+    } finally {
+      cameraRecoveryRunningRef.current = false;
+    }
+  }, [desktopBridge, desktopPlatform, openCameraStream]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.onSystemResume(() => {
+      void recoverCameraAfterResume();
+    });
+  }, [desktopBridge, recoverCameraAfterResume]);
 
   const monitorOnce = useCallback(async () => {
     if (
@@ -552,7 +769,7 @@ export function FaceGuardApp() {
     }
 
     detectionRunningRef.current = true;
-    setMessage("Checking this photo…");
+    setEnrolmentError("");
     try {
       const result = await engineRef.current.detect(videoRef.current);
       const decision = evaluateEnrolmentFaces(
@@ -561,7 +778,7 @@ export function FaceGuardApp() {
         FACEGUARD_CONFIG.enrolment.minimumFaceSizePx,
       );
       if (!decision.accepted) {
-        setMessage(
+        setEnrolmentError(
           decision.reason === "no-face"
             ? "No clear face detected. Face the camera in even lighting and try again."
             : decision.reason === "multiple-faces"
@@ -579,7 +796,7 @@ export function FaceGuardApp() {
         result.face[0]?.box,
       );
       if (!frameQuality.acceptable) {
-        setMessage(
+        setEnrolmentError(
           frameQuality.reason === "blurred"
             ? "This photo looks blurred. Hold still, turn your head to the marker, and try again."
             : "The lighting is not clear enough. Use even front lighting and try again.",
@@ -598,13 +815,14 @@ export function FaceGuardApp() {
         duplicateSimilarity >=
         FACEGUARD_CONFIG.enrolment.maximumDuplicateSimilarity
       ) {
-        setMessage(
+        setEnrolmentError(
           "This angle is too similar to an earlier photo. Turn your head—not only your eyes—towards the red marker and try again.",
         );
         return;
       }
 
       samplesRef.current.push(decision.embedding);
+      setEnrolmentError("");
       const count = samplesRef.current.length;
       setSampleCount(count);
 
@@ -612,26 +830,84 @@ export function FaceGuardApp() {
         setMessage("");
         beginMonitoring();
       } else {
-        setMessage(
-          `Photo ${count} accepted. Turn your head towards the next red marker.`,
-        );
+        setMessage("");
       }
     } catch {
-      setMessage("The local face check failed. Keep the camera clear and try again.");
+      setEnrolmentError(
+        "The local face check failed. Keep the camera clear and try again.",
+      );
     } finally {
       detectionRunningRef.current = false;
     }
   }, [beginMonitoring]);
 
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.onEnrolmentMarkerClicked(() => {
+      void captureSample();
+    });
+  }, [captureSample, desktopBridge]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.onEnrolmentMarkerModeChanged((mode) => {
+      setUsesExternalEnrolmentMarker(mode.external);
+      setShowsOtherScreenCue(mode.otherDisplay);
+    });
+  }, [desktopBridge]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    if (phase !== "enrolling") {
+      desktopBridge.hideEnrolmentMarker();
+      return;
+    }
+
+    let active = true;
+    void desktopBridge
+      .showEnrolmentMarker({
+        position: currentPhotoDirection.position,
+        label: currentPhotoDirection.label,
+        photoNumber: sampleCount + 1,
+        error: enrolmentError || undefined,
+      })
+      .then((mode) => {
+        if (!active) return;
+        setUsesExternalEnrolmentMarker(mode.external);
+        setShowsOtherScreenCue(mode.otherDisplay);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    currentPhotoDirection.label,
+    currentPhotoDirection.position,
+    desktopBridge,
+    enrolmentError,
+    phase,
+    sampleCount,
+  ]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return () => desktopBridge.hideEnrolmentMarker();
+  }, [desktopBridge]);
+
   const restart = useCallback(() => {
     updatePhase("intro");
     setMessage("");
+    setEnrolmentError("");
   }, [updatePhase]);
 
   const stateCopy = STATE_COPY[protection.observation];
+  const cameraStatusTone =
+    protection.observation === "safe"
+      ? "safe"
+      : protection.observation === "extra-viewer" ||
+          protection.observation === "unmatched-viewer"
+        ? "danger"
+        : "warning";
   const showVideo = phase === "enrolling" || phase === "monitoring";
-  const currentPhotoDirection =
-    PHOTO_DIRECTIONS[Math.min(sampleCount, PHOTO_DIRECTIONS.length - 1)];
 
   return (
     <main className="app-shell">
@@ -746,33 +1022,82 @@ export function FaceGuardApp() {
           )}
 
           {phase === "monitoring" && (
-            <div className={`status-card ${stateCopy.tone}`} aria-live="polite">
-              <span className="status-light" aria-hidden="true" />
-              <div>
-                <strong>{stateCopy.label}</strong>
-                <p>{stateCopy.detail}</p>
-              </div>
-              <div className="status-actions">
-                {!isDesktop && !isFullscreen && (
-                  <button className="text-button" onClick={enterFullscreen}>
-                    Full screen
-                  </button>
-                )}
-                {isDesktop && (
-                  <button
-                    className="text-button"
-                    onClick={() => desktopBridge?.hideControlWindow()}
+            <section className="protection-preferences" aria-live="polite">
+              <header className="protection-preferences-titlebar">
+                <strong>Control panel</strong>
+              </header>
+
+              <div className="protection-preference-row">
+                <div className="preference-state-copy">
+                  <span
+                    className={`preference-state-icon ${protectionPaused ? "paused" : "active"}`}
+                    aria-hidden="true"
                   >
-                    {desktopPlatform === "windows"
-                      ? "Hide to system tray"
-                      : "Hide to menu bar"}
+                    {protectionPaused ? "Ⅱ" : "✓"}
+                  </span>
+                  <div>
+                    <strong>
+                      {protectionPaused ? "Protection paused" : "Active protection"}
+                    </strong>
+                    <p>
+                      {pauseMode === "timed"
+                        ? <>
+                            Automatic restore in{" "}
+                            <strong className="pause-countdown">
+                              {formatPauseCountdown(pauseSecondsRemaining)}
+                            </strong>
+                          </>
+                        : pauseMode === "manual"
+                          ? "Paused until you restore protection"
+                          : "Screen concealment is ready"}
+                    </p>
+                  </div>
+                </div>
+                <div className="preference-segmented-actions">
+                  <button
+                    className={protectionPaused ? "selected" : undefined}
+                    onClick={toggleManualProtectionPause}
+                  >
+                    {protectionPaused ? "Restore now" : "Pause protection"}
                   </button>
-                )}
-                <button className="text-button" onClick={endSession}>
-                  End session
-                </button>
+                  <button onClick={pauseProtectionForTenMinutes}>
+                    Pause for 10 mins
+                  </button>
+                </div>
               </div>
-            </div>
+
+              <div className="protection-preference-row">
+                <div className="preference-state-copy">
+                  <span
+                    className={`preference-state-icon camera ${cameraStatusTone}`}
+                    aria-hidden="true"
+                  >
+                    ●
+                  </span>
+                  <div>
+                    <strong>{stateCopy.label}</strong>
+                    <p>
+                      {protectionPaused
+                        ? "Camera monitoring remains active"
+                        : stateCopy.detail}
+                    </p>
+                  </div>
+                </div>
+                <div className="preference-segmented-actions session-actions">
+                  {!isDesktop && !isFullscreen && (
+                    <button onClick={enterFullscreen}>Full screen</button>
+                  )}
+                  {isDesktop && (
+                    <button onClick={() => desktopBridge?.hideControlWindow()}>
+                      {desktopPlatform === "windows"
+                        ? "Hide to system tray"
+                        : "Hide to menu bar"}
+                    </button>
+                  )}
+                  <button onClick={endSession}>End session</button>
+                </div>
+              </div>
+            </section>
           )}
 
           {phase === "ended" && (
@@ -789,7 +1114,9 @@ export function FaceGuardApp() {
             </div>
           )}
 
-          {message && <p className="inline-message" role="alert">{message}</p>}
+          {message && phase !== "enrolling" && (
+            <p className="inline-message" role="alert">{message}</p>
+          )}
         </div>
 
         <div className="workspace-card" aria-label="FaceGuard protected workspace">
@@ -854,7 +1181,7 @@ export function FaceGuardApp() {
         <span>No uploads · No database · No account</span>
       </footer>
 
-      {phase === "enrolling" && (
+      {phase === "enrolling" && !usesExternalEnrolmentMarker && (
         <div
           className={`gaze-target ${currentPhotoDirection.position}`}
           aria-live="polite"
@@ -867,18 +1194,45 @@ export function FaceGuardApp() {
           >
             <span className="gaze-dot" aria-hidden="true" />
           </button>
-          <div className="gaze-message">
+          <div
+            className={`gaze-message${enrolmentError ? " gaze-feedback" : ""}`}
+            role={enrolmentError ? "alert" : undefined}
+          >
             <strong>
-              Turn your head towards this red spot, then click it to take the photo
+              {enrolmentError || "Turn your head toward the red spot and click"}
             </strong>
             <small>
+              {enrolmentError ? "Please check · " : ""}
               Photo {sampleCount + 1} · {currentPhotoDirection.label}
             </small>
           </div>
         </div>
       )}
 
-      {!isDesktop && phase === "monitoring" && protection.protected && (
+      {phase === "enrolling" && showsOtherScreenCue && (
+        <div
+          className={`external-marker-cue ${currentPhotoDirection.position.endsWith("left") ? "left" : "right"}`}
+          aria-live="polite"
+        >
+          <svg
+            aria-hidden="true"
+            className="external-marker-arrow"
+            viewBox="0 0 300 112"
+          >
+            <path
+              className="external-marker-arrow-shape"
+              d="M18 56L105 8L98 35H282V77H98L105 104Z"
+            />
+          </svg>
+          <strong>Look to the other screen</strong>
+          <span>The red marker is displayed there</span>
+        </div>
+      )}
+
+      {!isDesktop &&
+        phase === "monitoring" &&
+        protection.protected &&
+        !protectionPaused && (
         <div className="decoy-overlay" role="dialog" aria-modal="true" aria-label="Protected workspace">
           {/* The same static asset is used by the Vite/Electron renderer. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}

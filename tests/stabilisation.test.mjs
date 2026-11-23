@@ -166,6 +166,24 @@ test("additional viewer fails closed immediately and two safe checks recover", (
   assert.equal(recovered.extraViewerLatched, false);
 });
 
+test("one clear unmatched viewer conceals after two consecutive checks", () => {
+  const observation = classifyObservation({
+    faceCount: 1,
+    bestSimilarity: 0.2,
+    embeddingsComplete: true,
+    qualitySufficient: true,
+  });
+  assert.equal(observation, "unmatched-viewer");
+
+  const first = applySequence([observation]);
+  assert.equal(first.protected, false);
+  assert.equal(first.extraViewerLatched, false);
+
+  const second = advanceProtection(first, observation);
+  assert.equal(second.protected, true);
+  assert.equal(second.extraViewerLatched, true);
+});
+
 test("extra-viewer protection remains latched through absence and uncertainty", () => {
   let state = applySequence(["extra-viewer"]);
   state = advanceProtection(state, "absent");
@@ -189,11 +207,54 @@ test("only an unauthorised viewer cannot clear an active overlay", () => {
     embeddingsComplete: true,
     threshold: recognitionThresholdFor(state),
   });
-  assert.equal(remainingUnknownViewer, "absent");
+  assert.equal(remainingUnknownViewer, "unmatched-viewer");
 
   state = advanceProtection(state, remainingUnknownViewer);
   assert.equal(state.protected, true);
   assert.equal(state.extraViewerLatched, true);
+
+  const authorisedUserAlone = classifyObservation({
+    faceCount: 1,
+    bestSimilarity: 0.62,
+    embeddingsComplete: true,
+    threshold: recognitionThresholdFor(state),
+  });
+  assert.equal(authorisedUserAlone, "safe");
+  state = advanceProtection(state, authorisedUserAlone);
+  assert.equal(state.protected, true);
+  state = advanceProtection(state, authorisedUserAlone);
+  assert.equal(state.protected, false);
+});
+
+test("a stranger appearing after absence cannot clear the overlay", () => {
+  let state = applySequence([
+    "absent",
+    "absent",
+    "absent",
+    "absent",
+    "absent",
+    "absent",
+  ]);
+  assert.equal(state.protected, true);
+  assert.equal(state.extraViewerLatched, false);
+  assert.equal(
+    recognitionThresholdFor(state),
+    FACEGUARD_CONFIG.recognition.extraViewerRecoveryThreshold,
+  );
+
+  // This score would pass ordinary monitoring at 0.45, but must not recover
+  // an already protected session.
+  const stranger = classifyObservation({
+    faceCount: 1,
+    bestSimilarity: 0.5,
+    embeddingsComplete: true,
+    threshold: recognitionThresholdFor(state),
+  });
+  assert.equal(stranger, "unmatched-viewer");
+
+  state = advanceProtection(state, stranger);
+  state = advanceProtection(state, stranger);
+  assert.equal(state.protected, true);
 
   const authorisedUserAlone = classifyObservation({
     faceCount: 1,
@@ -338,6 +399,10 @@ test("transition timing remains derived from central configuration", () => {
   assert.equal(
     observedSpan(FACEGUARD_CONFIG.monitoring.additionalViewerPersistence),
     0,
+  );
+  assert.equal(
+    observedSpan(FACEGUARD_CONFIG.monitoring.unmatchedViewerPersistence),
+    650,
   );
   assert.equal(
     observedSpan(FACEGUARD_CONFIG.monitoring.absencePersistence),

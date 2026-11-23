@@ -1,5 +1,6 @@
 import type { ViewingState } from "../core/protection-state.ts";
 import type { DesktopPlatform } from "./platform.ts";
+import type { EnrolmentMarkerPosition } from "./enrolment-marker-position.ts";
 
 export const IPC = {
   cameraPermission: "faceguard:camera-permission",
@@ -11,6 +12,11 @@ export const IPC = {
   requestSessionEnd: "faceguard:request-session-end",
   hideControlWindow: "faceguard:hide-control-window",
   technicalLog: "faceguard:technical-log",
+  systemResume: "faceguard:system-resume",
+  enrolmentMarker: "faceguard:enrolment-marker",
+  hideEnrolmentMarker: "faceguard:hide-enrolment-marker",
+  enrolmentMarkerClicked: "faceguard:enrolment-marker-clicked",
+  enrolmentMarkerMode: "faceguard:enrolment-marker-mode",
 } as const;
 
 export type ProtectionStateMessage = {
@@ -26,6 +32,18 @@ export type DecoyImageMessage = {
 export type SavedDecoyImage = {
   dataUrl: string;
   name: string;
+};
+
+export type EnrolmentMarkerMessage = {
+  position: EnrolmentMarkerPosition;
+  label: string;
+  photoNumber: number;
+  error?: string;
+};
+
+export type EnrolmentMarkerMode = {
+  external: boolean;
+  otherDisplay: boolean;
 };
 
 export type RendererTechnicalLog = {
@@ -51,4 +69,13 @@ export type FaceGuardDesktopBridge = {
   hideControlWindow: () => void;
   technicalLog: (message: RendererTechnicalLog) => void;
   onSessionEndRequested: (callback: () => void) => () => void;
+  onSystemResume: (callback: () => void) => () => void;
+  showEnrolmentMarker: (
+    message: EnrolmentMarkerMessage,
+  ) => Promise<EnrolmentMarkerMode>;
+  hideEnrolmentMarker: () => void;
+  onEnrolmentMarkerClicked: (callback: () => void) => () => void;
+  onEnrolmentMarkerModeChanged: (
+    callback: (mode: EnrolmentMarkerMode) => void,
+  ) => () => void;
 };
