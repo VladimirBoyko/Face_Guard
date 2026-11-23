@@ -33,6 +33,9 @@ test("Windows packaging includes Squirrel installer and a native icon", async ()
   assert.match(forge, /MakerSquirrel/);
   assert.match(forge, /FaceGuard-Setup\.exe/);
   assert.match(main, /electron-squirrel-startup/);
+  assert.match(main, /--squirrel-firstrun/);
+  assert.match(main, /FaceGuard installed successfully/);
+  assert.match(main, /available from the Windows Start menu/);
   assert.match(main, /setAppUserModelId/);
   assert.match(main, /appendDiagnosticLog/);
   await access(new URL("../assets/FaceGuard.ico", import.meta.url));
@@ -78,7 +81,7 @@ test("Windows protection reasserts always-on-top z-order when shown", async () =
   assert.match(overlay, /visibleWindowCount/);
 });
 
-test("Windows sleep and unlock fail closed and restart the session camera", async () => {
+test("sleep and unlock fail closed and restart the camera on macOS and Windows", async () => {
   const [main, preload, renderer, contract] = await Promise.all([
     readFile(new URL("../src/desktop/main.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/desktop/preload.ts", import.meta.url), "utf8"),
@@ -94,5 +97,8 @@ test("Windows sleep and unlock fail closed and restart the session camera", asyn
   assert.match(contract, /systemResume: "faceguard:system-resume"/);
   assert.match(preload, /onSystemResume/);
   assert.match(renderer, /recoverCameraAfterResume/);
-  assert.match(renderer, /Reconnecting the camera after Windows resumed/);
+  assert.match(renderer, /desktopPlatform === "macos"/);
+  assert.match(renderer, /openCameraStream\(5_000\)/);
+  assert.match(renderer, /Camera request was superseded/);
+  assert.match(renderer, /Reconnecting the camera after the computer resumed/);
 });
