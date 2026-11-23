@@ -181,6 +181,7 @@ export function FaceGuardApp() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const detectionRunningRef = useRef(false);
   const cameraRecoveryRunningRef = useRef(false);
+  const cameraOpenGenerationRef = useRef(0);
   const protectionRef = useRef<ProtectionState>(INITIAL_PROTECTION);
   const phaseRef = useRef<Phase>("intro");
   const observationStartedAtRef = useRef<number | null>(null);
@@ -398,16 +399,19 @@ export function FaceGuardApp() {
     return engine as unknown as HumanEngine;
   }, [isDesktop]);
 
-  const openCameraStream = useCallback(async (): Promise<MediaStream> => {
+  const openCameraStream = useCallback(async (
+    timeoutMs?: number,
+  ): Promise<MediaStream> => {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Camera access is unavailable.");
     }
 
+    const generation = ++cameraOpenGenerationRef.current;
     stopMediaStream(streamRef.current);
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
 
-    const stream = await navigator.mediaDevices.getUserMedia({
+    const streamRequest = navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: "user",
         width: { ideal: 960 },
@@ -415,6 +419,29 @@ export function FaceGuardApp() {
       },
       audio: false,
     });
+    const guardedStreamRequest = streamRequest.then((stream) => {
+      if (generation !== cameraOpenGenerationRef.current) {
+        stopMediaStream(stream);
+        throw new Error("Camera request was superseded.");
+      }
+      return stream;
+    });
+    let timeoutId: number | undefined;
+    const stream = timeoutMs
+      ? await Promise.race([
+          guardedStreamRequest,
+          new Promise<never>((_resolve, reject) => {
+            timeoutId = window.setTimeout(() => {
+              if (generation === cameraOpenGenerationRef.current) {
+                cameraOpenGenerationRef.current += 1;
+              }
+              reject(new Error("Camera did not recover in time."));
+            }, timeoutMs);
+          }),
+        ]).finally(() => {
+          if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+        })
+      : await guardedStreamRequest;
 
     try {
       if (!videoRef.current) throw new Error("Video preview is unavailable.");
@@ -494,17 +521,20 @@ export function FaceGuardApp() {
       protected: true,
       observation: "uncertain",
     });
-    setMessage("Reconnecting the camera after Windows resumed…");
+    setMessage("Reconnecting the camera after the computer resumed…");
 
     let attempt = 0;
     try {
+      if (desktopPlatform === "macos") {
+        await new Promise((resolve) => window.setTimeout(resolve, 750));
+      }
       while (
         phaseRef.current === "enrolling" ||
         phaseRef.current === "monitoring"
       ) {
         attempt += 1;
         try {
-          const stream = await openCameraStream();
+          const stream = await openCameraStream(5_000);
           const stillActive =
             phaseRef.current === "enrolling" ||
             phaseRef.current === "monitoring";
@@ -538,7 +568,7 @@ export function FaceGuardApp() {
     } finally {
       cameraRecoveryRunningRef.current = false;
     }
-  }, [desktopBridge, openCameraStream]);
+  }, [desktopBridge, desktopPlatform, openCameraStream]);
 
   useEffect(() => {
     if (!desktopBridge) return;
