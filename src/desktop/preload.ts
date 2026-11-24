@@ -7,6 +7,7 @@ import {
   type FaceGuardDesktopBridge,
   type ProtectionStateMessage,
   type RendererTechnicalLog,
+  type SystemRecoveryReason,
 } from "./ipc-contract.ts";
 import { desktopPlatform } from "./platform.ts";
 
@@ -29,8 +30,11 @@ const bridge: FaceGuardDesktopBridge = {
     ipcRenderer.on(IPC.requestSessionEnd, listener);
     return () => ipcRenderer.removeListener(IPC.requestSessionEnd, listener);
   },
-  onSystemResume: (callback: () => void) => {
-    const listener = () => callback();
+  onSystemResume: (callback: (reason: SystemRecoveryReason) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      reason: SystemRecoveryReason,
+    ) => callback(reason);
     ipcRenderer.on(IPC.systemResume, listener);
     return () => ipcRenderer.removeListener(IPC.systemResume, listener);
   },

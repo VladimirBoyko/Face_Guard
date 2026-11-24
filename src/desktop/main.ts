@@ -87,13 +87,14 @@ function protectForSystemInterruption(reason: "suspend" | "lock-screen"): void {
 
 function recoverAfterSystemResume(reason: "resume" | "unlock-screen"): void {
   if (!sessionActive) return;
-  currentObservation = "uncertain";
-  overlayManager?.setProtection(true, "uncertain");
+  const unlockedByUser = reason === "unlock-screen";
+  currentObservation = unlockedByUser ? "safe" : "uncertain";
+  overlayManager?.setProtection(!unlockedByUser, currentObservation);
   updateTray();
-  controlWindow?.webContents.send(IPC.systemResume);
+  controlWindow?.webContents.send(IPC.systemResume, reason);
   logTechnicalEvent("desktop", "camera-recovery-requested", {
-    observation: "uncertain",
-    protected: true,
+    observation: currentObservation,
+    protected: !unlockedByUser,
     reason,
   });
 }

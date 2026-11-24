@@ -46,6 +46,8 @@ export type EnrolmentMarkerMode = {
   otherDisplay: boolean;
 };
 
+export type SystemRecoveryReason = "resume" | "unlock-screen";
+
 export type RendererTechnicalLog = {
   event: string;
   observation?: ViewingState;
@@ -69,7 +71,9 @@ export type FaceGuardDesktopBridge = {
   hideControlWindow: () => void;
   technicalLog: (message: RendererTechnicalLog) => void;
   onSessionEndRequested: (callback: () => void) => () => void;
-  onSystemResume: (callback: () => void) => () => void;
+  onSystemResume: (
+    callback: (reason: SystemRecoveryReason) => void,
+  ) => () => void;
   showEnrolmentMarker: (
     message: EnrolmentMarkerMessage,
   ) => Promise<EnrolmentMarkerMode>;

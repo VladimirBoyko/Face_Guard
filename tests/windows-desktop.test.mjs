@@ -78,7 +78,7 @@ test("Windows protection reasserts always-on-top z-order when shown", async () =
   assert.match(overlay, /visibleWindowCount/);
 });
 
-test("sleep and unlock fail closed and restart the camera on macOS and Windows", async () => {
+test("sleep fails closed while explicit unlock safely restarts monitoring on macOS and Windows", async () => {
   const [main, preload, renderer, contract] = await Promise.all([
     readFile(new URL("../src/desktop/main.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/desktop/preload.ts", import.meta.url), "utf8"),
@@ -91,10 +91,15 @@ test("sleep and unlock fail closed and restart the camera on macOS and Windows",
   assert.match(main, /powerMonitor\.on\("resume"/);
   assert.match(main, /powerMonitor\.on\("unlock-screen"/);
   assert.match(main, /overlayManager\?\.setProtection\(true, "uncertain"\)/);
+  assert.match(main, /const unlockedByUser = reason === "unlock-screen"/);
+  assert.match(main, /setProtection\(!unlockedByUser, currentObservation\)/);
+  assert.match(main, /webContents\.send\(IPC\.systemResume, reason\)/);
   assert.match(contract, /systemResume: "faceguard:system-resume"/);
+  assert.match(contract, /SystemRecoveryReason = "resume" \| "unlock-screen"/);
   assert.match(preload, /onSystemResume/);
   assert.match(renderer, /recoverCameraAfterResume/);
-  assert.match(renderer, /desktopPlatform === "macos"/);
+  assert.match(renderer, /reason === "unlock-screen"/);
+  assert.match(renderer, /POST_ENROLMENT_PROTECTION/);
   assert.match(renderer, /openCameraStream\(5_000\)/);
   assert.match(renderer, /Camera request was superseded/);
   assert.match(renderer, /Reconnecting the camera after the computer resumed/);

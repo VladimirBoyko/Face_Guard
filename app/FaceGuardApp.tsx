@@ -576,7 +576,9 @@ export function FaceGuardApp() {
     updatePhase,
   ]);
 
-  const recoverCameraAfterResume = useCallback(async () => {
+  const recoverCameraAfterResume = useCallback(async (
+    reason: "resume" | "unlock-screen",
+  ) => {
     const sessionIsActive =
       phaseRef.current === "enrolling" || phaseRef.current === "monitoring";
     if (!desktopBridge || !sessionIsActive || cameraRecoveryRunningRef.current) {
@@ -584,18 +586,21 @@ export function FaceGuardApp() {
     }
 
     cameraRecoveryRunningRef.current = true;
-    const interrupted = {
-      ...protectionRef.current,
-      protected: true,
-      observation: "uncertain" as const,
-      safeHits: 0,
-      unsafeHits: 0,
-    };
+    const unlockedByUser = reason === "unlock-screen";
+    const interrupted = unlockedByUser
+      ? { ...POST_ENROLMENT_PROTECTION }
+      : {
+          ...protectionRef.current,
+          protected: true,
+          observation: "uncertain" as const,
+          safeHits: 0,
+          unsafeHits: 0,
+        };
     protectionRef.current = interrupted;
     setProtection(interrupted);
     desktopBridge.protectionStateChanged({
-      protected: true,
-      observation: "uncertain",
+      protected: interrupted.protected,
+      observation: interrupted.observation,
     });
     setMessage("Reconnecting the camera after the computer resumed…");
 
@@ -648,8 +653,8 @@ export function FaceGuardApp() {
 
   useEffect(() => {
     if (!desktopBridge) return;
-    return desktopBridge.onSystemResume(() => {
-      void recoverCameraAfterResume();
+    return desktopBridge.onSystemResume((reason) => {
+      void recoverCameraAfterResume(reason);
     });
   }, [desktopBridge, recoverCameraAfterResume]);
 
