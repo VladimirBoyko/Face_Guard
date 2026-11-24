@@ -1,5 +1,6 @@
 import type {
   DecoyImageMessage,
+  EnrolmentMarkerMessage,
   ProtectionStateMessage,
   RendererTechnicalLog,
 } from "./ipc-contract.ts";
@@ -11,6 +12,13 @@ const VIEWING_STATES = new Set([
   "unmatched-viewer",
   "absent",
   "uncertain",
+]);
+const ENROLMENT_MARKER_POSITIONS = new Set([
+  "centre",
+  "upper-left",
+  "lower-left",
+  "upper-right",
+  "lower-right",
 ]);
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -38,6 +46,25 @@ export function isDecoyImageMessage(value: unknown): value is DecoyImageMessage 
       (candidate.dataUrl === null || isSafeDecoyDataUrl(candidate.dataUrl)) &&
       (candidate.name === undefined ||
         (typeof candidate.name === "string" && candidate.name.length <= 160)),
+  );
+}
+
+export function isEnrolmentMarkerMessage(
+  value: unknown,
+): value is EnrolmentMarkerMessage {
+  const candidate = record(value);
+  return Boolean(
+    candidate &&
+      typeof candidate.position === "string" &&
+      ENROLMENT_MARKER_POSITIONS.has(candidate.position) &&
+      typeof candidate.label === "string" &&
+      candidate.label.length > 0 &&
+      candidate.label.length <= 80 &&
+      Number.isInteger(candidate.photoNumber) &&
+      Number(candidate.photoNumber) >= 1 &&
+      Number(candidate.photoNumber) <= 20 &&
+      (candidate.error === undefined ||
+        (typeof candidate.error === "string" && candidate.error.length <= 300)),
   );
 }
 

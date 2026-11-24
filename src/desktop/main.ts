@@ -3,6 +3,7 @@ import squirrelStartup from "electron-squirrel-startup";
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   powerMonitor,
   session,
@@ -17,6 +18,7 @@ import {
   type RendererTechnicalLog,
 } from "./ipc-contract.ts";
 import { OverlayManager } from "./overlay-manager.ts";
+import { EnrolmentMarkerManager } from "./enrolment-marker-manager.ts";
 import { appendDiagnosticLog, showDiagnosticLog } from "./diagnostic-log.ts";
 import { shouldGrantMediaPermission } from "./permissions.ts";
 import { FaceGuardTray } from "./tray.ts";
@@ -27,18 +29,23 @@ import {
 } from "./decoy-store.ts";
 import {
   isDecoyImageMessage,
+  isEnrolmentMarkerMessage,
   isProtectionStateMessage,
   sanitiseRendererLog,
 } from "./validation.ts";
 
 let controlWindow: BrowserWindow | null = null;
 let overlayManager: OverlayManager | null = null;
+let enrolmentMarkerManager: EnrolmentMarkerManager | null = null;
 let tray: FaceGuardTray | null = null;
 let sessionActive = false;
 let currentObservation: ViewingState = "uncertain";
 let isQuitting = false;
 let quitFallback: ReturnType<typeof setTimeout> | null = null;
 const isSquirrelStartup = process.platform === "win32" && squirrelStartup;
+const isSquirrelFirstRun =
+  process.platform === "win32" &&
+  process.argv.includes("--squirrel-firstrun");
 if (isSquirrelStartup) app.quit();
 const hasSingleInstanceLock =
   !isSquirrelStartup && app.requestSingleInstanceLock();
@@ -109,6 +116,7 @@ function finishSession(): void {
   sessionActive = false;
   currentObservation = "uncertain";
   overlayManager?.endSession();
+  enrolmentMarkerManager?.hide();
   updateTray();
   logTechnicalEvent("desktop", "session-ended");
   if (isQuitting) {
@@ -137,6 +145,13 @@ function exitApplication(): void {
     overlayManager = null;
   }
   try {
+    enrolmentMarkerManager?.dispose();
+  } catch {
+    // Continue so an enrolment marker cannot keep FaceGuard alive.
+  } finally {
+    enrolmentMarkerManager = null;
+  }
+  try {
     if (controlWindow && !controlWindow.isDestroyed()) {
       controlWindow.destroy();
     }
@@ -155,6 +170,7 @@ function requestQuit(): void {
   if (isQuitting) return;
   isQuitting = true;
   overlayManager?.hideAll();
+  enrolmentMarkerManager?.hide();
   if (sessionActive && controlWindow && !controlWindow.isDestroyed()) {
     requestSessionEnd();
     quitFallback = setTimeout(exitApplication, 1_000);
@@ -217,6 +233,18 @@ function createControlWindow(): BrowserWindow {
   window.once("ready-to-show", () => {
     window.maximize();
     window.show();
+    if (isSquirrelFirstRun) {
+      void dialog.showMessageBox(window, {
+        type: "info",
+        title: "FaceGuard installed",
+        message: "FaceGuard installed successfully",
+        detail:
+          "FaceGuard is ready to use and is available from the Windows Start menu.",
+        buttons: ["Start FaceGuard"],
+        defaultId: 0,
+        noLink: true,
+      });
+    }
   });
   return window;
 }
@@ -286,6 +314,14 @@ function registerIpc(): void {
     if (!isControlSender(event.sender.id)) return;
     finishSession();
   });
+  ipcMain.handle(IPC.enrolmentMarker, (event, message: unknown) => {
+    if (!isControlSender(event.sender.id)) return false;
+    if (!isEnrolmentMarkerMessage(message)) return false;
+    return enrolmentMarkerManager?.show(message) ?? false;
+  });
+  ipcMain.on(IPC.hideEnrolmentMarker, (event) => {
+    if (isControlSender(event.sender.id)) enrolmentMarkerManager?.hide();
+  });
   ipcMain.on(IPC.hideControlWindow, (event) => {
     if (isControlSender(event.sender.id)) controlWindow?.hide();
   });
@@ -313,6 +349,13 @@ app.whenReady().then(() => {
     app.setAppUserModelId("au.edu.torrens.faceguard.prototype");
   }
   controlWindow = createControlWindow();
+  enrolmentMarkerManager = new EnrolmentMarkerManager(
+    () => controlWindow?.webContents.send(IPC.enrolmentMarkerClicked),
+    () => controlWindow,
+    (mode) =>
+      controlWindow?.webContents.send(IPC.enrolmentMarkerMode, mode),
+  );
+  enrolmentMarkerManager.initialise();
   configurePermissions();
   registerIpc();
   powerMonitor.on("suspend", () => protectForSystemInterruption("suspend"));
@@ -356,9 +399,11 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   isQuitting = true;
   overlayManager?.hideAll();
+  enrolmentMarkerManager?.hide();
 });
 app.on("will-quit", () => {
   setTechnicalLogSink(null);
   tray?.destroy();
   overlayManager?.dispose();
+  enrolmentMarkerManager?.dispose();
 });

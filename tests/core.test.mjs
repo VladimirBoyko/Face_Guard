@@ -15,6 +15,12 @@ import {
 } from "../src/core/descriptor.ts";
 import { advanceProtection } from "../src/core/protection-state.ts";
 import {
+  effectiveProtectionState,
+  isProtectionPaused,
+  secondsUntilPauseEnds,
+  TEN_MINUTE_PAUSE_MS,
+} from "../src/core/protection-pause.ts";
+import {
   isDecoyImageMessage,
   isProtectionStateMessage,
   sanitiseRendererLog,
@@ -33,6 +39,18 @@ test("central configuration retains the prototype defaults", () => {
   assert.equal(FACEGUARD_CONFIG.monitoring.unmatchedViewerPersistence, 2);
   assert.equal(FACEGUARD_CONFIG.monitoring.uncertainPersistence, 3);
   assert.equal(FACEGUARD_CONFIG.monitoring.recoverySafeObservations, 2);
+});
+
+test("protection pauses concealment while recognition continues", () => {
+  assert.equal(TEN_MINUTE_PAUSE_MS, 600_000);
+  assert.equal(isProtectionPaused("active"), false);
+  assert.equal(isProtectionPaused("timed"), true);
+  assert.equal(isProtectionPaused("manual"), true);
+  assert.equal(effectiveProtectionState(true, "active"), true);
+  assert.equal(effectiveProtectionState(true, "timed"), false);
+  assert.equal(effectiveProtectionState(true, "manual"), false);
+  assert.equal(secondsUntilPauseEnds(700_000, 100_000), 600);
+  assert.equal(secondsUntilPauseEnds(99_000, 100_000), 0);
 });
 
 test("unsafe observation persistence is independent", () => {

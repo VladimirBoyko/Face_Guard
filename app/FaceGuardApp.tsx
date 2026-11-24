@@ -38,6 +38,13 @@ import {
   clearSessionBiometricMemory,
   stopMediaStream,
 } from "../src/core/session-cleanup";
+import {
+  effectiveProtectionState,
+  isProtectionPaused,
+  secondsUntilPauseEnds,
+  TEN_MINUTE_PAUSE_MS,
+  type ProtectionPauseMode,
+} from "../src/core/protection-pause";
 
 type Phase =
   | "intro"
@@ -67,6 +74,12 @@ type HumanEngine = {
 const ENROLMENT_SAMPLES = FACEGUARD_CONFIG.enrolment.sampleCount;
 const MONITOR_INTERVAL_MS = FACEGUARD_CONFIG.monitoring.intervalMs;
 const PHOTO_DIRECTIONS = FACEGUARD_CONFIG.enrolment.directions;
+
+function formatPauseCountdown(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
 
 function readVideoFrameQuality(
   video: HTMLVideoElement,
@@ -166,8 +179,15 @@ export function FaceGuardApp() {
   const [sampleCount, setSampleCount] = useState(0);
   const [protection, setProtection] =
     useState<ProtectionState>(INITIAL_PROTECTION);
+  const [pauseMode, setPauseMode] =
+    useState<ProtectionPauseMode>("active");
+  const [pauseEndsAt, setPauseEndsAt] = useState<number | null>(null);
+  const [pauseSecondsRemaining, setPauseSecondsRemaining] = useState(0);
   const [lastCheckMs, setLastCheckMs] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [usesExternalEnrolmentMarker, setUsesExternalEnrolmentMarker] =
+    useState(false);
+  const [showsOtherScreenCue, setShowsOtherScreenCue] = useState(false);
   const [customDecoy, setCustomDecoy] = useState<{
     dataUrl: string;
     name: string;
@@ -190,6 +210,44 @@ export function FaceGuardApp() {
   );
 
   const decoyImageSrc = customDecoy?.dataUrl ?? defaultDecoyImage;
+  const currentPhotoDirection =
+    PHOTO_DIRECTIONS[Math.min(sampleCount, PHOTO_DIRECTIONS.length - 1)];
+  const protectionPaused = isProtectionPaused(pauseMode);
+
+  const restoreProtection = useCallback(() => {
+    setPauseMode("active");
+    setPauseEndsAt(null);
+    setPauseSecondsRemaining(0);
+  }, []);
+
+  const pauseProtectionForTenMinutes = useCallback(() => {
+    const endsAt = Date.now() + TEN_MINUTE_PAUSE_MS;
+    setPauseMode("timed");
+    setPauseEndsAt(endsAt);
+    setPauseSecondsRemaining(TEN_MINUTE_PAUSE_MS / 1_000);
+  }, []);
+
+  const toggleManualProtectionPause = useCallback(() => {
+    if (protectionPaused) {
+      restoreProtection();
+      return;
+    }
+    setPauseMode("manual");
+    setPauseEndsAt(null);
+    setPauseSecondsRemaining(0);
+  }, [protectionPaused, restoreProtection]);
+
+  useEffect(() => {
+    if (pauseMode !== "timed" || pauseEndsAt === null) return;
+    const updateCountdown = () => {
+      const remaining = secondsUntilPauseEnds(pauseEndsAt);
+      setPauseSecondsRemaining(remaining);
+      if (remaining === 0) restoreProtection();
+    };
+    updateCountdown();
+    const countdown = window.setInterval(updateCountdown, 1_000);
+    return () => window.clearInterval(countdown);
+  }, [pauseEndsAt, pauseMode, restoreProtection]);
 
   useEffect(() => {
     if (!desktopBridge) return;
@@ -248,12 +306,20 @@ export function FaceGuardApp() {
     setLastCheckMs(null);
     setMessage("");
     setEnrolmentError("");
+    restoreProtection();
     updatePhase("ended");
     desktopBridge?.sessionEnded();
     if (!isDesktop && document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined);
     }
-  }, [clearBiometricMemory, desktopBridge, isDesktop, stopMonitoring, updatePhase]);
+  }, [
+    clearBiometricMemory,
+    desktopBridge,
+    isDesktop,
+    restoreProtection,
+    stopMonitoring,
+    updatePhase,
+  ]);
 
   useEffect(() => {
     const release = () => {
@@ -340,12 +406,16 @@ export function FaceGuardApp() {
     if (desktopProtectionTimerRef.current) {
       clearTimeout(desktopProtectionTimerRef.current);
     }
-    const delay = protection.protected
+    const effectiveProtected = effectiveProtectionState(
+      protection.protected,
+      pauseMode,
+    );
+    const delay = effectiveProtected
       ? FACEGUARD_CONFIG.monitoring.concealmentDelayMs
       : FACEGUARD_CONFIG.monitoring.recoveryDelayMs;
     desktopProtectionTimerRef.current = setTimeout(() => {
       desktopBridge.protectionStateChanged({
-        protected: protection.protected,
+        protected: effectiveProtected,
         observation: protection.observation,
       });
       desktopProtectionTimerRef.current = null;
@@ -356,7 +426,13 @@ export function FaceGuardApp() {
         desktopProtectionTimerRef.current = null;
       }
     };
-  }, [desktopBridge, phase, protection.observation, protection.protected]);
+  }, [
+    desktopBridge,
+    pauseMode,
+    phase,
+    protection.observation,
+    protection.protected,
+  ]);
 
   const createEngine = useCallback(async (): Promise<HumanEngine> => {
     const { Human } = await import("@vladmandic/human");
@@ -765,6 +841,58 @@ export function FaceGuardApp() {
     }
   }, [beginMonitoring]);
 
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.onEnrolmentMarkerClicked(() => {
+      void captureSample();
+    });
+  }, [captureSample, desktopBridge]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.onEnrolmentMarkerModeChanged((mode) => {
+      setUsesExternalEnrolmentMarker(mode.external);
+      setShowsOtherScreenCue(mode.otherDisplay);
+    });
+  }, [desktopBridge]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    if (phase !== "enrolling") {
+      desktopBridge.hideEnrolmentMarker();
+      return;
+    }
+
+    let active = true;
+    void desktopBridge
+      .showEnrolmentMarker({
+        position: currentPhotoDirection.position,
+        label: currentPhotoDirection.label,
+        photoNumber: sampleCount + 1,
+        error: enrolmentError || undefined,
+      })
+      .then((mode) => {
+        if (!active) return;
+        setUsesExternalEnrolmentMarker(mode.external);
+        setShowsOtherScreenCue(mode.otherDisplay);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    currentPhotoDirection.label,
+    currentPhotoDirection.position,
+    desktopBridge,
+    enrolmentError,
+    phase,
+    sampleCount,
+  ]);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return () => desktopBridge.hideEnrolmentMarker();
+  }, [desktopBridge]);
+
   const restart = useCallback(() => {
     updatePhase("intro");
     setMessage("");
@@ -772,9 +900,14 @@ export function FaceGuardApp() {
   }, [updatePhase]);
 
   const stateCopy = STATE_COPY[protection.observation];
+  const cameraStatusTone =
+    protection.observation === "safe"
+      ? "safe"
+      : protection.observation === "extra-viewer" ||
+          protection.observation === "unmatched-viewer"
+        ? "danger"
+        : "warning";
   const showVideo = phase === "enrolling" || phase === "monitoring";
-  const currentPhotoDirection =
-    PHOTO_DIRECTIONS[Math.min(sampleCount, PHOTO_DIRECTIONS.length - 1)];
 
   return (
     <main className="app-shell">
@@ -889,33 +1022,82 @@ export function FaceGuardApp() {
           )}
 
           {phase === "monitoring" && (
-            <div className={`status-card ${stateCopy.tone}`} aria-live="polite">
-              <span className="status-light" aria-hidden="true" />
-              <div>
-                <strong>{stateCopy.label}</strong>
-                <p>{stateCopy.detail}</p>
-              </div>
-              <div className="status-actions">
-                {!isDesktop && !isFullscreen && (
-                  <button className="text-button" onClick={enterFullscreen}>
-                    Full screen
-                  </button>
-                )}
-                {isDesktop && (
-                  <button
-                    className="text-button"
-                    onClick={() => desktopBridge?.hideControlWindow()}
+            <section className="protection-preferences" aria-live="polite">
+              <header className="protection-preferences-titlebar">
+                <strong>Control panel</strong>
+              </header>
+
+              <div className="protection-preference-row">
+                <div className="preference-state-copy">
+                  <span
+                    className={`preference-state-icon ${protectionPaused ? "paused" : "active"}`}
+                    aria-hidden="true"
                   >
-                    {desktopPlatform === "windows"
-                      ? "Hide to system tray"
-                      : "Hide to menu bar"}
+                    {protectionPaused ? "Ⅱ" : "✓"}
+                  </span>
+                  <div>
+                    <strong>
+                      {protectionPaused ? "Protection paused" : "Active protection"}
+                    </strong>
+                    <p>
+                      {pauseMode === "timed"
+                        ? <>
+                            Automatic restore in{" "}
+                            <strong className="pause-countdown">
+                              {formatPauseCountdown(pauseSecondsRemaining)}
+                            </strong>
+                          </>
+                        : pauseMode === "manual"
+                          ? "Paused until you restore protection"
+                          : "Screen concealment is ready"}
+                    </p>
+                  </div>
+                </div>
+                <div className="preference-segmented-actions">
+                  <button
+                    className={protectionPaused ? "selected" : undefined}
+                    onClick={toggleManualProtectionPause}
+                  >
+                    {protectionPaused ? "Restore now" : "Pause protection"}
                   </button>
-                )}
-                <button className="text-button" onClick={endSession}>
-                  End session
-                </button>
+                  <button onClick={pauseProtectionForTenMinutes}>
+                    Pause for 10 mins
+                  </button>
+                </div>
               </div>
-            </div>
+
+              <div className="protection-preference-row">
+                <div className="preference-state-copy">
+                  <span
+                    className={`preference-state-icon camera ${cameraStatusTone}`}
+                    aria-hidden="true"
+                  >
+                    ●
+                  </span>
+                  <div>
+                    <strong>{stateCopy.label}</strong>
+                    <p>
+                      {protectionPaused
+                        ? "Camera monitoring remains active"
+                        : stateCopy.detail}
+                    </p>
+                  </div>
+                </div>
+                <div className="preference-segmented-actions session-actions">
+                  {!isDesktop && !isFullscreen && (
+                    <button onClick={enterFullscreen}>Full screen</button>
+                  )}
+                  {isDesktop && (
+                    <button onClick={() => desktopBridge?.hideControlWindow()}>
+                      {desktopPlatform === "windows"
+                        ? "Hide to system tray"
+                        : "Hide to menu bar"}
+                    </button>
+                  )}
+                  <button onClick={endSession}>End session</button>
+                </div>
+              </div>
+            </section>
           )}
 
           {phase === "ended" && (
@@ -999,7 +1181,7 @@ export function FaceGuardApp() {
         <span>No uploads · No database · No account</span>
       </footer>
 
-      {phase === "enrolling" && (
+      {phase === "enrolling" && !usesExternalEnrolmentMarker && (
         <div
           className={`gaze-target ${currentPhotoDirection.position}`}
           aria-live="polite"
@@ -1027,7 +1209,30 @@ export function FaceGuardApp() {
         </div>
       )}
 
-      {!isDesktop && phase === "monitoring" && protection.protected && (
+      {phase === "enrolling" && showsOtherScreenCue && (
+        <div
+          className={`external-marker-cue ${currentPhotoDirection.position.endsWith("left") ? "left" : "right"}`}
+          aria-live="polite"
+        >
+          <svg
+            aria-hidden="true"
+            className="external-marker-arrow"
+            viewBox="0 0 300 112"
+          >
+            <path
+              className="external-marker-arrow-shape"
+              d="M18 56L105 8L98 35H282V77H98L105 104Z"
+            />
+          </svg>
+          <strong>Look to the other screen</strong>
+          <span>The red marker is displayed there</span>
+        </div>
+      )}
+
+      {!isDesktop &&
+        phase === "monitoring" &&
+        protection.protected &&
+        !protectionPaused && (
         <div className="decoy-overlay" role="dialog" aria-modal="true" aria-label="Protected workspace">
           {/* The same static asset is used by the Vite/Electron renderer. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
