@@ -7,6 +7,11 @@ import {
   overlayBounds,
   trayLocation,
 } from "../src/desktop/platform.ts";
+import {
+  WINDOWS_APP_ID,
+  windowsInstallerEvent,
+  windowsShortcutCommand,
+} from "../src/desktop/windows-installer.ts";
 
 test("Windows uses complete-display overlays and system-tray language", () => {
   const display = {
@@ -32,10 +37,35 @@ test("Windows packaging includes Squirrel installer and a native icon", async ()
 
   assert.match(forge, /MakerSquirrel/);
   assert.match(forge, /FaceGuard-Setup\.exe/);
-  assert.match(main, /electron-squirrel-startup/);
-  assert.match(main, /setAppUserModelId/);
+  assert.match(forge, /name: "FaceGuard"/);
+  assert.equal(WINDOWS_APP_ID, "com.squirrel.FaceGuard.FaceGuard");
+  assert.match(main, /setAppUserModelId\(WINDOWS_APP_ID\)/);
   assert.match(main, /appendDiagnosticLog/);
   await access(new URL("../assets/FaceGuard.ico", import.meta.url));
+});
+
+test("only an installed Windows build handles Squirrel shortcuts", () => {
+  const args = (flag) => ["FaceGuard.exe", flag, "0.1.2"];
+  assert.equal(windowsInstallerEvent("win32", true, args("--squirrel-install")), "create");
+  assert.equal(windowsInstallerEvent("win32", true, args("--squirrel-updated")), "create");
+  assert.equal(windowsInstallerEvent("win32", true, args("--squirrel-uninstall")), "remove");
+  assert.equal(windowsInstallerEvent("win32", true, args("--squirrel-obsolete")), "obsolete");
+  assert.equal(windowsInstallerEvent("win32", true, args("--squirrel-firstrun")), "first-run");
+  assert.equal(windowsInstallerEvent("win32", true, ["FaceGuard.exe"]), null);
+  assert.equal(windowsInstallerEvent("win32", false, args("--squirrel-install")), null);
+  assert.equal(windowsInstallerEvent("darwin", true, args("--squirrel-install")), null);
+});
+
+test("shortcut commands use the installed updater and app, not Setup.exe", () => {
+  const root = String.raw`C:\Users\Test User\AppData\Local\FaceGuard`;
+  const app = root + String.raw`\app-0.1.2\FaceGuard.exe`;
+  assert.deepEqual(windowsShortcutCommand("create", app), {
+    updater: root + String.raw`\Update.exe`,
+    args: ["--createShortcut=FaceGuard.exe"],
+  });
+  assert.deepEqual(windowsShortcutCommand("remove", app).args, [
+    "--removeShortcut=FaceGuard.exe",
+  ]);
 });
 
 test("Windows tray uses a visible high-contrast FG icon", async () => {

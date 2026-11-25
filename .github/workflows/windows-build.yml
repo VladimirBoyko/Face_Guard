@@ -28,6 +28,9 @@ jobs:
       - run: pnpm run desktop:typecheck
       - run: pnpm run test
       - run: pnpm run desktop:make:windows
+      - name: Verify the Start menu shortcut after one install
+        shell: pwsh
+        run: ./installer/test-windows-install.ps1
       - uses: actions/upload-artifact@v7
         with:
           name: FaceGuard-Windows-x64

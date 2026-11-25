@@ -132,9 +132,13 @@ pnpm run desktop:make:windows
 The Squirrel installer is produced at
 `out/make/squirrel.windows/x64/FaceGuard-Setup.exe`. It creates Start Menu and
 desktop integration and installs FaceGuard for the current Windows user.
+After one installation, open **FaceGuard** from the Start menu's app list;
+`FaceGuard-Setup.exe` is only the installer.
 
 You can also run the **Build Windows installer** GitHub Actions workflow. Its
 `FaceGuard-Windows-x64` artifact contains the installer and update metadata.
+Before publishing the artifact, the workflow checks that a single installation
+creates a Start menu shortcut pointing to the installed app.
 The current installer is unsigned, so Windows SmartScreen may show an
 unrecognised-publisher warning until a Windows code-signing certificate is
 configured.

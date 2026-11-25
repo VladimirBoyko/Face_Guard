@@ -1,5 +1,4 @@
 import path from "node:path";
-import squirrelStartup from "electron-squirrel-startup";
 import {
   app,
   BrowserWindow,
@@ -23,6 +22,11 @@ import { appendDiagnosticLog, showDiagnosticLog } from "./diagnostic-log.ts";
 import { shouldGrantMediaPermission } from "./permissions.ts";
 import { FaceGuardTray } from "./tray.ts";
 import {
+  updateWindowsShortcuts,
+  WINDOWS_APP_ID,
+  windowsInstallerEvent,
+} from "./windows-installer.ts";
+import {
   clearSavedDecoy,
   loadSavedDecoy,
   saveDecoy,
@@ -42,11 +46,15 @@ let sessionActive = false;
 let currentObservation: ViewingState = "uncertain";
 let isQuitting = false;
 let quitFallback: ReturnType<typeof setTimeout> | null = null;
-const isSquirrelStartup = process.platform === "win32" && squirrelStartup;
-const isSquirrelFirstRun =
-  process.platform === "win32" &&
-  process.argv.includes("--squirrel-firstrun");
-if (isSquirrelStartup) app.quit();
+const installerEvent = windowsInstallerEvent(
+  process.platform,
+  app.isPackaged,
+  process.argv,
+);
+const isSquirrelStartup =
+  installerEvent === "create" ||
+  installerEvent === "remove" ||
+  installerEvent === "obsolete";
 const hasSingleInstanceLock =
   !isSquirrelStartup && app.requestSingleInstanceLock();
 
@@ -180,7 +188,7 @@ function requestQuit(): void {
   }
 }
 
-function createControlWindow(): BrowserWindow {
+function createControlWindow(firstRunShortcutsCreated?: boolean): BrowserWindow {
   const window = new BrowserWindow({
     width: 1180,
     height: 820,
@@ -234,13 +242,16 @@ function createControlWindow(): BrowserWindow {
   window.once("ready-to-show", () => {
     window.maximize();
     window.show();
-    if (isSquirrelFirstRun) {
+    if (firstRunShortcutsCreated !== undefined) {
       void dialog.showMessageBox(window, {
-        type: "info",
+        type: firstRunShortcutsCreated ? "info" : "warning",
         title: "FaceGuard installed",
-        message: "FaceGuard installed successfully",
-        detail:
-          "FaceGuard is ready to use and is available from the Windows Start menu.",
+        message: firstRunShortcutsCreated
+          ? "FaceGuard installed successfully"
+          : "FaceGuard installed, but shortcut creation failed",
+        detail: firstRunShortcutsCreated
+          ? "FaceGuard is ready to use and is available from the Windows Start menu."
+          : "FaceGuard can run now, but its shortcut may be missing from the Windows Start menu.",
         buttons: ["Start FaceGuard"],
         defaultId: 0,
         noLink: true,
@@ -335,9 +346,17 @@ function registerIpc(): void {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (isSquirrelStartup) {
-    app.quit();
+    // Squirrel waits for this process before moving on to the initial launch.
+    try {
+      if (installerEvent === "create" || installerEvent === "remove") {
+        await updateWindowsShortcuts(installerEvent);
+      }
+      app.exit(0);
+    } catch {
+      app.exit(1);
+    }
     return;
   }
   if (!hasSingleInstanceLock) {
@@ -347,9 +366,22 @@ app.whenReady().then(() => {
   setTechnicalLogSink(appendDiagnosticLog);
   if (process.platform === "darwin") app.dock?.hide();
   if (process.platform === "win32") {
-    app.setAppUserModelId("au.edu.torrens.faceguard.prototype");
+    app.setAppUserModelId(WINDOWS_APP_ID);
   }
-  controlWindow = createControlWindow();
+  let firstRunShortcutsCreated: boolean | undefined;
+  if (installerEvent === "first-run") {
+    // Retry once on first launch in case the installation hook could not run.
+    try {
+      await updateWindowsShortcuts("create");
+      firstRunShortcutsCreated = true;
+    } catch {
+      firstRunShortcutsCreated = false;
+      logTechnicalEvent("desktop", "windows-shortcut-creation-failed", {
+        reason: "squirrel-updater-failed",
+      });
+    }
+  }
+  controlWindow = createControlWindow(firstRunShortcutsCreated);
   enrolmentMarkerManager = new EnrolmentMarkerManager(
     () => controlWindow?.webContents.send(IPC.enrolmentMarkerClicked),
     () => controlWindow,
